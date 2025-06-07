@@ -29,6 +29,39 @@ on:
         type: string
         default: stable
 
+  workflow_dispatch: # This allows this workflow to be called from another workflow
+    inputs:
+      model:
+        description: 'Device model codename (e.g., OPAce5Pro)'
+        required: true
+        type: string
+      soc:
+        description: 'SoC codename (e.g., sun)'
+        required: true
+        type: string
+      branch:
+        description: 'Kernel source branch'
+        required: true
+        type: string
+      manifest:
+        description: 'Manifest name'
+        required: true
+        type: string
+      android_version:
+        description: 'Android version (e.g., 14)'
+        required: true
+        type: string
+      kernel_version:
+        description: 'Kernel version (e.g., 5.15)'
+        required: true
+        type: string
+      ksun_branch:
+        description: 'KernelSU branch'
+        required: true
+        type: string
+        default: stable
+
+
 jobs:
   build-kernel-oneplus-kernelsu-susfs:
     runs-on: ubuntu-latest
@@ -91,7 +124,7 @@ jobs:
         run: |
           echo "Cloning AnyKernel3 and other dependencies..."
           
-          ANYKERNEL_BRANCH="gki-2.0"
+          ANYKERNEL_BRANCH="gki"
           SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
           
           # Debug print the branches
