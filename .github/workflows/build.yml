@@ -98,7 +98,7 @@ jobs:
         run: |
           # Install dependencies
           sudo apt update
-          sudo apt install -y python3 python-is-python3
+          sudo apt install -y python3 python-is-python3 tree # Added tree for better directory listing
           
           mkdir -p ./git-repo
           curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
@@ -140,7 +140,44 @@ jobs:
           echo "Cloning kernel source for SM6375..."
           # This repository should support SM6375. Ensure your chosen branch is compatible.
           git clone https://github.com/Teamhackneyed/android_kernel_oneplus_sm6375.git -b "${{ inputs.branch }}" --depth=1
+
+      # NEW STEP FOR DEBUGGING
+      - name: List Kernel Source Contents
+        run: |
+          echo "Listing contents of $CONFIG/android_kernel_oneplus_sm6375..."
+          cd "$CONFIG/android_kernel_oneplus_sm6375"
           
+          echo "--- Top Level Contents ---"
+          ls -alh
+          
+          echo "--- Contents of ./oplus/ ---"
+          if [ -d "./oplus" ]; then
+            ls -alh ./oplus
+          else
+            echo "./oplus directory not found."
+          fi
+          
+          echo "--- Contents of ./oplus/build/ ---"
+          if [ -d "./oplus/build" ]; then
+            ls -alh ./oplus/build
+          else
+            echo "./oplus/build directory not found."
+          fi
+
+          echo "--- Looking for build_with_bazel.py ---"
+          if [ -f "./build_with_bazel.py" ]; then
+            echo "Found: ./build_with_bazel.py"
+          else
+            echo "./build_with_bazel.py not found."
+          fi
+          
+          echo "--- Checking for defconfig: arch/arm64/configs/gki_defconfig ---"
+          if [ -f "./arch/arm64/configs/gki_defconfig" ]; then
+            echo "Found: ./arch/arm64/configs/gki_defconfig"
+          else
+            echo "./arch/arm64/configs/gki_defconfig not found."
+          fi
+
       - name: Add KernelSU Next
         run: |
           echo "Changing to kernel source directory: $CONFIG/android_kernel_oneplus_sm6375..."
@@ -197,7 +234,6 @@ jobs:
           
           cd ../../ # CWD is kernel_root
           # The following sed was specific to "sun" SoC. SM6375 might not need it, or need a different one.
-          # If SM6375 needs a similar modification, you'd add:
           # if [ "${{ inputs.soc }}" == "sm6375" ]; then
           #   sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace/hooks/fs.h>' ./fs/namespace.c
           # fi
@@ -227,10 +263,18 @@ jobs:
           echo "Changing to kernel source directory: $CONFIG/android_kernel_oneplus_sm6375..."
           cd "$CONFIG/android_kernel_oneplus_sm6375"
           
-          echo "Adding configuration settings to gki_defconfig..."
           DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"
+          echo "Adding configuration settings to $DEFCONFIG_PATH..."
           # Some kernels might use a device-specific defconfig, e.g., arch/arm64/configs/vendor/${{ inputs.model }}_defconfig
           # For SM6375 with this kernel source, gki_defconfig is typical.
+          
+          # Ensure defconfig path exists before appending, or create if necessary
+          if [ ! -f "$DEFCONFIG_PATH" ]; then
+            echo "Warning: $DEFCONFIG_PATH not found. Attempting to create it or its directory."
+            mkdir -p "$(dirname "$DEFCONFIG_PATH")"
+            touch "$DEFCONFIG_PATH" # Create an empty file if it doesn't exist
+            echo "$DEFCONFIG_PATH created."
+          fi
 
           # Add KSU configuration settings
           echo "CONFIG_KSU=y" >> $DEFCONFIG_PATH
@@ -264,16 +308,21 @@ jobs:
           cd "$CONFIG/android_kernel_oneplus_sm6375"
           DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"
           
-          echo "Adding BBR configuration settings to $DEFCONFIG_PATH..."
-          echo "CONFIG_TCP_CONG_ADVANCED=y" >> $DEFCONFIG_PATH
-          echo "CONFIG_TCP_CONG_BBR=y" >> $DEFCONFIG_PATH
-          echo "CONFIG_DEFAULT_TCP_CONG=\"bbr\"" >> $DEFCONFIG_PATH # Sets BBR as default
-          echo "CONFIG_TCP_CONG_BIC=n" >> $DEFCONFIG_PATH
-          echo "CONFIG_TCP_CONG_WESTWOOD=n" >> $DEFCONFIG_PATH
-          echo "CONFIG_TCP_CONG_HTCP=n" >> $DEFCONFIG_PATH
-          
-          echo "CONFIG_NET_SCH_FQ=y" >> $DEFCONFIG_PATH
-          echo "CONFIG_NET_SCH_FQ_CODEL=y" >> $DEFCONFIG_PATH # FQ_CODEL is often paired with BBR
+          # Ensure defconfig path exists before appending
+          if [ ! -f "$DEFCONFIG_PATH" ]; then
+            echo "Warning: $DEFCONFIG_PATH not found in BBR step. Skipping BBR config."
+          else
+            echo "Adding BBR configuration settings to $DEFCONFIG_PATH..."
+            echo "CONFIG_TCP_CONG_ADVANCED=y" >> $DEFCONFIG_PATH
+            echo "CONFIG_TCP_CONG_BBR=y" >> $DEFCONFIG_PATH
+            echo "CONFIG_DEFAULT_TCP_CONG=\"bbr\"" >> $DEFCONFIG_PATH # Sets BBR as default
+            echo "CONFIG_TCP_CONG_BIC=n" >> $DEFCONFIG_PATH
+            echo "CONFIG_TCP_CONG_WESTWOOD=n" >> $DEFCONFIG_PATH
+            echo "CONFIG_TCP_CONG_HTCP=n" >> $DEFCONFIG_PATH
+            
+            echo "CONFIG_NET_SCH_FQ=y" >> $DEFCONFIG_PATH
+            echo "CONFIG_NET_SCH_FQ_CODEL=y" >> $DEFCONFIG_PATH # FQ_CODEL is often paired with BBR
+          fi
 
       - name: Add TTL Target Support (Optional Netfilter Feature)
         run: |
@@ -281,10 +330,15 @@ jobs:
           cd "$CONFIG/android_kernel_oneplus_sm6375"
           DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"
 
-          echo "Adding TTL target configuration settings to $DEFCONFIG_PATH..."
-          echo "CONFIG_IP_NF_TARGET_TTL=y" >> $DEFCONFIG_PATH
-          echo "CONFIG_IP6_NF_TARGET_HL=y" >> $DEFCONFIG_PATH
-          echo "CONFIG_IP6_NF_MATCH_HL=y" >> $DEFCONFIG_PATH
+          # Ensure defconfig path exists before appending
+          if [ ! -f "$DEFCONFIG_PATH" ]; then
+            echo "Warning: $DEFCONFIG_PATH not found in TTL step. Skipping TTL config."
+          else
+            echo "Adding TTL target configuration settings to $DEFCONFIG_PATH..."
+            echo "CONFIG_IP_NF_TARGET_TTL=y" >> $DEFCONFIG_PATH
+            echo "CONFIG_IP6_NF_TARGET_HL=y" >> $DEFCONFIG_PATH
+            echo "CONFIG_IP6_NF_MATCH_HL=y" >> $DEFCONFIG_PATH
+          fi
 
       - name: Run sed and perl Commands
         shell: /usr/bin/bash -e {0}
@@ -391,8 +445,16 @@ jobs:
           sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
           
           # Adjust paths if abi_gki_protected_exports_* are in a different location for this kernel
-          rm ./android/abi_gki_protected_exports_* || echo "No android/abi_gki_protected_exports_*!"
-          rm ./msm-kernel/android/abi_gki_protected_exports_* || echo "No msm-kernel/android/abi_gki_protected_exports_*!"
+          if [ -f ./android/abi_gki_protected_exports_* ]; then
+            rm ./android/abi_gki_protected_exports_*
+          else
+            echo "No android/abi_gki_protected_exports_* to remove!"
+          fi
+          if [ -f ./msm-kernel/android/abi_gki_protected_exports_* ]; then
+            rm ./msm-kernel/android/abi_gki_protected_exports_*
+          else
+            echo "No msm-kernel/android/abi_gki_protected_exports_* to remove!"
+          fi
           
           BUILD_TYPE="gki" # Default build type
           BAZEL_ARGS=(--jobs=$(nproc --all) --lto=thin)
@@ -422,14 +484,20 @@ jobs:
           # The output directory for artifacts is specified as ../out relative to CWD ($CONFIG/android_kernel_oneplus_sm6375)
           # So artifacts will be in $CONFIG/out
           if [ -f ./build_with_bazel.py ]; then # Often found in CAF-based kernels
-            ./oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
+            # Check for oplus/bazel/oplus_modules_variant.sh existence before running
+            if [ -f ./oplus/bazel/oplus_modules_variant.sh ]; then
+              ./oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
+            else
+              echo "Warning: ./oplus/bazel/oplus_modules_variant.sh not found. Skipping."
+            fi
             ./build_with_bazel.py -t ${{ inputs.soc }} $BUILD_TYPE "${BAZEL_ARGS[@]}" -o "$(pwd)/../out"
           elif [ -f ./oplus/build/oplus_build_kernel.sh ]; then # OnePlus specific build script
             LTO=thin ./oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE" # This script might handle output dir itself
             # If oplus_build_kernel.sh outputs to a different dir, adjust copy step below.
             # Assuming it also outputs to $(pwd)/../out or a sub-directory there.
           else
-            echo "No recognized build script found (build_with_bazel.py or oplus_build_kernel.sh)"
+            echo "ERROR: No recognized build script found (build_with_bazel.py or ./oplus/build/oplus_build_kernel.sh)"
+            echo "Please check the 'List Kernel Source Contents' step output to verify the kernel source structure."
             exit 1
           fi
 
@@ -437,6 +505,12 @@ jobs:
         run: |
           echo "Changing to workspace directory: $CONFIG..."
           cd "$CONFIG" # CWD is $CONFIG, build artifacts are in $CONFIG/out/dist
+          
+          # Ensure the output directory exists before trying to copy from it
+          if [ ! -d "./out/dist" ]; then
+            echo "ERROR: Build output directory ./out/dist not found. Cannot copy images."
+            exit 1
+          fi
           
           echo "Copying Images to AnyKernel3..."
           cp ./out/dist/Image ../AnyKernel3/Image
@@ -480,24 +554,13 @@ jobs:
             cp dtbo.img dtbo_cn.img
             sed -i 's/hmbird/xxbird/g' dtbo_cn.img
             # Zip with the modified dtbo, ensure other files are as intended for CN version
-            zip -r9 "../${ZIP_NAME%.zip}-CN-version.zip" ./* -x ".*" -x "__MACOSX" -x "*.git*" -x dtbo.img -x "dtbo_cn.img" # Exclude original dtbo if not needed
-            # After zipping, if you want to include dtbo_cn.img as dtbo.img in the zip:
-            # mv dtbo_cn.img dtbo.img
-            # zip -r9 "../${ZIP_NAME%.zip}-CN-version.zip" ./* -x ".*" -x "__MACOSX" -x "*.git*"
-            # mv dtbo.img dtbo_cn.img # Or restore original if needed
-            # For simplicity, if the CN zip should just have the modified dtbo:
-            mv dtbo_cn.img dtbo.img # Temporarily replace dtbo.img with the CN version
-            zip -r9 "../${ZIP_NAME%.zip}-CN-version.zip" ./* -x ".*" -x "__MACOSX" -x "*.git*"
-            # It's safer to clean up or restore the original dtbo.img if AnyKernel3 is used further
-            # For now, this assumes the last zip is the final step for this particular set of files.
-            # If you need to restore, you'd have to cp the original dtbo.img back.
-            # To be safer:
-            # {
-            #   cp dtbo.img dtbo.img.bak
-            #   sed -i 's/hmbird/xxbird/g' dtbo.img
-            #   zip -r9 "../${ZIP_NAME%.zip}-CN-version.zip" ./* -x ".*" -x "__MACOSX" -x "*.git*" -x "*.bak"
-            #   mv dtbo.img.bak dtbo.img
-            # }
+            # Safer approach: make a temporary directory for zipping CN version
+            mkdir ../cn_zip_temp
+            cp -r ./* ../cn_zip_temp/
+            mv ../cn_zip_temp/dtbo_cn.img ../cn_zip_temp/dtbo.img
+            (cd ../cn_zip_temp && zip -r9 "../../${ZIP_NAME%.zip}-CN-version.zip" ./* -x ".*" -x "__MACOSX" -x "*.git*" -x "dtbo_cn.img")
+            rm -rf ../cn_zip_temp
+            rm dtbo_cn.img # Clean up the modified copy in the main AnyKernel3 dir
           fi
 
       - name: Upload Build Artifacts
