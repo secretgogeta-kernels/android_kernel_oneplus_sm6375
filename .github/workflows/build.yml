@@ -29,27 +29,29 @@ on:
   workflow_dispatch:
     inputs:
       model:
-        description: 'Device model codename (e.g., OPAce5Pro)'
+        description: 'Device model codename (e.g., larry, OPAce5Pro)'
         required: true
         type: string
+        default: 'larry'
       soc:
-        description: 'SoC codename (e.g., sun)'
+        description: 'SoC codename (e.g., sm6375, sun)'
         required: true
         type: string
+        default: 'sm6375'
       branch:
-        description: 'Kernel source branch'
+        description: 'Kernel source branch (e.g., thirteen, fourteen-ksu)'
         required: true
         type: string
       android_version:
-        description: 'Android version (e.g., 14)'
+        description: 'Android version (e.g., 13, 14)'
         required: true
         type: string
       kernel_version:
-        description: 'Kernel version (e.g., 5.15)'
+        description: 'Kernel version (e.g., 5.10, 5.15)' # SM6375 is often 5.10
         required: true
         type: string
       ksun_branch:
-        description: 'KernelSU branch'
+        description: 'KernelSU branch (e.g., stable, next)'
         required: true
         type: string
         default: stable
@@ -116,8 +118,9 @@ jobs:
         run: |
           echo "Cloning AnyKernel3 and other dependencies..."
           
-          ANYKERNEL_BRANCH="gki"
-          SUSFS_BRANCH="kernel-5.4"
+          ANYKERNEL_BRANCH="gki" # Or "master" or specific branch if needed for larry
+          SUSFS_BRANCH="kernel-5.4" # This might need adjustment if your kernel_version is significantly different (e.g. 5.10, 5.15)
+                                    # Check susfs4ksu repo for appropriate branches if issues arise.
           
           # Debug print the branches
           echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
@@ -134,12 +137,13 @@ jobs:
           mkdir -p "$CONFIG"
           cd "$CONFIG"
           
-          echo "Cloning kernel source..."
+          echo "Cloning kernel source for SM6375..."
+          # This repository should support SM6375. Ensure your chosen branch is compatible.
           git clone https://github.com/Teamhackneyed/android_kernel_oneplus_sm6375.git -b "${{ inputs.branch }}" --depth=1
           
       - name: Add KernelSU Next
         run: |
-          echo "Changing to configuration directory: $CONFIG..."
+          echo "Changing to kernel source directory: $CONFIG/android_kernel_oneplus_sm6375..."
           cd "$CONFIG/android_kernel_oneplus_sm6375"
           
           echo "Adding KernelSU Next..."
@@ -154,17 +158,18 @@ jobs:
 
       - name: Apply SUSFS Patches
         run: |
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/android_kernel_oneplus_sm6375"
+          echo "Changing to kernel source directory: $CONFIG/android_kernel_oneplus_sm6375..."
+          cd "$CONFIG/android_kernel_oneplus_sm6375" # CWD is kernel root
           
-          echo "Applying SUSFS patches..."
+          echo "Applying SUSFS patches for kernel version ${{ inputs.kernel_version }}..."
           
           # Copy SUSFS patches
-          cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_kernel-${{ inputs.kernel_version }}.patch ./common/
-          cp ../../susfs4ksu/kernel_patches/fs/* ./common/fs/
-          cp ../../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+          # Ensure this patch file exists for your inputs.kernel_version (e.g., 5.10, 5.15)
+          cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_kernel-${{ inputs.kernel_version }}.patch ./ 
+          cp ../../susfs4ksu/kernel_patches/fs/* ./fs/ 
+          cp ../../susfs4ksu/kernel_patches/include/linux/* ./include/linux/
           
-          cd ./KernelSU-Next
+          cd ./KernelSU-Next # CWD: kernel_root/KernelSU-Next
           
           if [ "${{ inputs.ksun_branch }}" == "stable" ] || [ "${{ inputs.ksun_branch }}" == "next" ]; then
             echo "Applying next SUSFS patches..."
@@ -185,112 +190,121 @@ jobs:
               ;;
           esac
           
-          cd ./kernel
+          cd ./kernel # CWD: kernel_root/KernelSU-Next/kernel
           KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" $BASE_VERSION)
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
           sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
           
-          # Change to common directory and apply SUSFS patch
-          cd ../../common
-          if [ "${{ inputs.soc }}" == "sun" ]; then
-            sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace/hooks/fs.h>' ./fs/namespace.c
-          fi
-          patch -p1 < 50_add_susfs_in_kernel-${{ inputs.kernel_version }}.patch || true
+          cd ../../ # CWD is kernel_root
+          # The following sed was specific to "sun" SoC. SM6375 might not need it, or need a different one.
+          # If SM6375 needs a similar modification, you'd add:
+          # if [ "${{ inputs.soc }}" == "sm6375" ]; then
+          #   sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace/hooks/fs.h>' ./fs/namespace.c
+          # fi
+          patch -p1 < ./50_add_susfs_in_kernel-${{ inputs.kernel_version }}.patch || true
 
       - name: Apply KSUN Hooks
         run: |
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/android_kernel_oneplus_sm6375/common"
+          echo "Changing to kernel source directory: $CONFIG/android_kernel_oneplus_sm6375..."
+          cd "$CONFIG/android_kernel_oneplus_sm6375" 
           echo "Applying KSUN Hooks..."
-          cp ../../../kernel_patches/next/syscall_hooks.patch ./
+          cp ../../kernel_patches/next/syscall_hooks.patch ./
           patch -p1 --fuzz=3 < ./syscall_hooks.patch
           
       - name: Apply Hide Stuff Patches
         run: |
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/android_kernel_oneplus_sm6375/common"
-          # Apply additional patch
-          cp ../../../kernel_patches/69_hide_stuff.patch ./
+          echo "Changing to kernel source directory: $CONFIG/android_kernel_oneplus_sm6375..."
+          cd "$CONFIG/android_kernel_oneplus_sm6375"
+          cp ../../../kernel_patches/69_hide_stuff.patch ./ # This path is relative to $CONFIG/android_kernel_oneplus_sm6375
           patch -p1 -F 3 < 69_hide_stuff.patch
 
       - name: Add KernelSU-Next and SUSFS Configuration Settings
         run: |
-          echo "Changing to configuration directory: $CONFIG..."
+          echo "Changing to kernel source directory: $CONFIG/android_kernel_oneplus_sm6375..."
           cd "$CONFIG/android_kernel_oneplus_sm6375"
           
           echo "Adding configuration settings to gki_defconfig..."
-          
+          DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"
+          # Some kernels might use a device-specific defconfig, e.g., arch/arm64/configs/vendor/${{ inputs.model }}_defconfig
+          # For SM6375 with this kernel source, gki_defconfig is typical.
+
           # Add KSU configuration settings
-          echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_KPROBES_HOOK=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_KSU_KPROBES_HOOK=n" >> $DEFCONFIG_PATH # n is common, y if you know you need kprobes specifically
           
           # Add SUSFS configuration settings
-          echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> $DEFCONFIG_PATH
+          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> $DEFCONFIG_PATH
           
           # Add additional tmpfs config setting
-          echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_TMPFS_XATTR=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_TMPFS_POSIX_ACL=y" >> $DEFCONFIG_PATH
 
-      - name: Add BBR Support
+      - name: Add BBR Support (Optional TCP Congestion Control)
         run: |
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/kernel_platform"
+          echo "Changing to kernel source directory: $CONFIG/android_kernel_oneplus_sm6375..."
+          cd "$CONFIG/android_kernel_oneplus_sm6375"
+          DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"
           
-          echo "Adding configuration settings to gki_defconfig..."
-          echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TCP_CONG_BBR=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TCP_CONG_BIC=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TCP_CONG_WESTWOOD=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TCP_CONG_HTCP=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "Adding BBR configuration settings to $DEFCONFIG_PATH..."
+          echo "CONFIG_TCP_CONG_ADVANCED=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_TCP_CONG_BBR=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_DEFAULT_TCP_CONG=\"bbr\"" >> $DEFCONFIG_PATH # Sets BBR as default
+          echo "CONFIG_TCP_CONG_BIC=n" >> $DEFCONFIG_PATH
+          echo "CONFIG_TCP_CONG_WESTWOOD=n" >> $DEFCONFIG_PATH
+          echo "CONFIG_TCP_CONG_HTCP=n" >> $DEFCONFIG_PATH
           
-          echo "CONFIG_NET_SCH_FQ=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_NET_SCH_FQ_CODEL=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NET_SCH_FQ=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_NET_SCH_FQ_CODEL=y" >> $DEFCONFIG_PATH # FQ_CODEL is often paired with BBR
 
-      - name: Add TTL Target Support
+      - name: Add TTL Target Support (Optional Netfilter Feature)
         run: |
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/kernel_platform"
-          
-          echo "Adding configuration settings to gki_defconfig..."
-          echo "CONFIG_IP_NF_TARGET_TTL=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "Changing to kernel source directory: $CONFIG/android_kernel_oneplus_sm6375..."
+          cd "$CONFIG/android_kernel_oneplus_sm6375"
+          DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"
+
+          echo "Adding TTL target configuration settings to $DEFCONFIG_PATH..."
+          echo "CONFIG_IP_NF_TARGET_TTL=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_IP6_NF_TARGET_HL=y" >> $DEFCONFIG_PATH
+          echo "CONFIG_IP6_NF_MATCH_HL=y" >> $DEFCONFIG_PATH
 
       - name: Run sed and perl Commands
         run: |
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/kernel_platform"
+          echo "Changing to kernel source directory: $CONFIG/android_kernel_oneplus_sm6375..."
+          cd "$CONFIG/android_kernel_oneplus_sm6375" 
+          DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"
           
-          echo "Running sed commands..."
+          echo "Running sed commands on $DEFCONFIG_PATH and scripts..."
           
-          sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
-          sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "./common/arch/arm64/configs/gki_defconfig"
+          sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG_PATH"
+          sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG_PATH"
+          sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG_PATH"
           
           # Run sed commands for modifications
-          sed -i 's/check_defconfig//' ./common/build.config.gki
-          sed -i '$s|echo "\$res"|echo "\$res-Wild"|' ./common/scripts/setlocalversion
-          sed -i '$s|echo "\$res"|echo "\$res-Wild"|' ./msm-kernel/scripts/setlocalversion
-          sed -i '$s|echo "\$res"|echo "\$res-Wild"|' ./external/dtc/scripts/setlocalversion
+          sed -i 's/check_defconfig//' ./build.config.gki
+          sed -i '$s|echo "\$res"|echo "\$res-Wild"|' ./scripts/setlocalversion
+          # msm-kernel might not exist in all generic kernel sources, or path might differ
+          [ -f ./msm-kernel/scripts/setlocalversion ] && sed -i '$s|echo "\$res"|echo "\$res-Wild"|' ./msm-kernel/scripts/setlocalversion || echo "msm-kernel/scripts/setlocalversion not found, skipping."
+          [ -f ./external/dtc/scripts/setlocalversion ] && sed -i '$s|echo "\$res"|echo "\$res-Wild"|' ./external/dtc/scripts/setlocalversion || echo "external/dtc/scripts/setlocalversion not found, skipping."
+          
           sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl || echo "No stamp.bzl!"
-          sed -i 's/-dirty//' ./common/scripts/setlocalversion
-          sed -i 's/-dirty//' ./msm-kernel/scripts/setlocalversion
-          sed -i 's/-dirty//' ./external/dtc/scripts/setlocalversion
+          sed -i 's/-dirty//' ./scripts/setlocalversion
+          [ -f ./msm-kernel/scripts/setlocalversion ] && sed -i 's/-dirty//' ./msm-kernel/scripts/setlocalversion || echo "msm-kernel/scripts/setlocalversion not found, skipping."
+          [ -f ./external/dtc/scripts/setlocalversion ] && sed -i 's/-dirty//' ./external/dtc/scripts/setlocalversion || echo "external/dtc/scripts/setlocalversion not found, skipping."
           sed -i 's/-dirty//' ./build/kernel/kleaf/workspace_status_stamp.py || echo "No workspace_status_stamp.py!"
           
           sed -i '/echo "LTO $LTO "/i export LTO=thin' ./oplus/build/oplus_setup.sh
@@ -298,29 +312,34 @@ jobs:
          
           # Run perl command to modify UTS_VERSION
           DATESTR=$(date -u)
-          perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./common/scripts/mkcompile_h
-          perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./msm-kernel/scripts/mkcompile_h
-          
-          # find . -type f -exec sed -i 's/\(make\s\+-C[^\n]*\)\s\+/\1 -j$(nproc) /g' {} +
+          perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./scripts/mkcompile_h
+          [ -f ./msm-kernel/scripts/mkcompile_h ] && perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./msm-kernel/scripts/mkcompile_h || echo "msm-kernel/scripts/mkcompile_h not found, skipping."
 
       - name: Build the Kernel
         run: |
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG"
+          echo "Changing to workspace directory: $CONFIG..."
+          # Build scripts are often run from the parent of the kernel source directory, or from within.
+          # The oplus scripts expect to be run from $CONFIG (workspace) and kernel source is in $CONFIG/android_kernel_oneplus_sm6375
+          # However, the previous script had build commands like ./kernel_platform/oplus/...
+          # Let's assume the build scripts are inside the kernel source dir and we should cd into it.
+          cd "$CONFIG/android_kernel_oneplus_sm6375"
           
-          echo "Building the kernel..."
+          echo "Building the kernel for SoC ${{ inputs.soc }}..."
           # Clear Cache
           sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
           
-          rm ./kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
-          rm ./kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
+          # Adjust paths if abi_gki_protected_exports_* are in a different location for this kernel
+          rm ./android/abi_gki_protected_exports_* || echo "No android/abi_gki_protected_exports_*!"
+          rm ./msm-kernel/android/abi_gki_protected_exports_* || echo "No msm-kernel/android/abi_gki_protected_exports_*!"
           
-          BUILD_TYPE="gki"
+          BUILD_TYPE="gki" # Default build type
           BAZEL_ARGS=(--jobs=$(nproc --all) --lto=thin)
-          if [ "${{ inputs.soc }}" == "sun" ]; then
-            BUILD_TYPE="perf"
-            BAZEL_ARGS+=(-g)
-          fi
+          
+          # Example: If sm6375 needs specific args similar to how "sun" did
+          # if [ "${{ inputs.soc }}" == "sm6375" ]; then
+          #   BUILD_TYPE="perf" # Or whatever is appropriate
+          #   BAZEL_ARGS+=(-g) # Example for debug symbols
+          # fi
           
           (stdbuf -oL bash -c '
             while true; do
@@ -337,25 +356,49 @@ jobs:
           MONITOR_PID=$!
           trap "kill $MONITOR_PID" EXIT
           
-          if [ -f ./kernel_platform/build_with_bazel.py ]; then
-            ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
-            ./kernel_platform/build_with_bazel.py -t ${{ inputs.soc }} $BUILD_TYPE "${BAZEL_ARGS[@]}" -o "$(pwd)/out"
+          # Assuming build scripts are in kernel source tree (e.g., ./oplus/...)
+          # The output directory for artifacts is specified as ../out relative to CWD ($CONFIG/android_kernel_oneplus_sm6375)
+          # So artifacts will be in $CONFIG/out
+          if [ -f ./build_with_bazel.py ]; then # Often found in CAF-based kernels
+            ./oplus/bazel/oplus_modules_variant.sh ${{ inputs.soc }} "$BUILD_TYPE" ""
+            ./build_with_bazel.py -t ${{ inputs.soc }} $BUILD_TYPE "${BAZEL_ARGS[@]}" -o "$(pwd)/../out"
+          elif [ -f ./oplus/build/oplus_build_kernel.sh ]; then # OnePlus specific build script
+            LTO=thin ./oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE" # This script might handle output dir itself
+            # If oplus_build_kernel.sh outputs to a different dir, adjust copy step below.
+            # Assuming it also outputs to $(pwd)/../out or a sub-directory there.
           else
-            LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ inputs.soc }} "$BUILD_TYPE"
+            echo "No recognized build script found (build_with_bazel.py or oplus_build_kernel.sh)"
+            exit 1
           fi
 
       - name: Copy Images
         run: |
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG"
+          echo "Changing to workspace directory: $CONFIG..."
+          cd "$CONFIG" # CWD is $CONFIG, build artifacts are in $CONFIG/out/dist
           
-          echo "Copying Image"
+          echo "Copying Images to AnyKernel3..."
           cp ./out/dist/Image ../AnyKernel3/Image
+          
           if [ "${{ inputs.model }}" == "OPAce5Pro" ]; then
             cp ./out/dist/dtbo.img ../AnyKernel3/
             cp ./out/dist/system_dlkm.erofs.img ../AnyKernel3/system_dlkm.img
             # cp ./out/dist/vendor_dlkm.img ../AnyKernel3/
             # cp ./out/dist/vendor_boot.img ../AnyKernel3/
+          elif [ "${{ inputs.model }}" == "larry" ]; then
+            echo "Copying images for larry (OnePlus Nord CE 3 Lite 5G)"
+            cp ./out/dist/dtbo.img ../AnyKernel3/dtbo.img
+            # For larry (SM6375), vendor_boot.img is common. Verify if your build produces this.
+            # Or it might be vendor_dlkm.img. Check your out/dist directory after a local build.
+            if [ -f ./out/dist/vendor_boot.img ]; then
+              cp ./out/dist/vendor_boot.img ../AnyKernel3/vendor_boot.img
+              echo "Copied vendor_boot.img"
+            elif [ -f ./out/dist/vendor_dlkm.img ]; then
+              cp ./out/dist/vendor_dlkm.img ../AnyKernel3/vendor_dlkm.img
+              echo "Copied vendor_dlkm.img"
+            else
+              echo "Warning: Neither vendor_boot.img nor vendor_dlkm.img found in ./out/dist/"
+            fi
+            # Add other images if needed for larry, e.g., recovery.img if AnyKernel3 flashes it
           fi
 
       - name: Create ZIP Files for Different Formats
@@ -364,18 +407,40 @@ jobs:
           cd ./AnyKernel3
           
           # Zip the files in the AnyKernel3 directory with a new naming convention
-          ZIP_NAME="${{ inputs.model }}_${{ inputs.android_version }}_${{ inputs.kernel_version }}_Next_SUSFS_AnyKernel3.zip"
+          ZIP_NAME="${{ inputs.model }}_A${{ inputs.android_version }}_K${{ inputs.kernel_version }}_KSUNext_${{ env.KSUVER }}_SUSFS_AnyKernel3.zip"
           echo "Creating zip file $ZIP_NAME..."
-          zip -r "../$ZIP_NAME" ./*
-          # Fengchi Patch for OPAce5Pro
+          zip -r9 "../$ZIP_NAME" ./* -x ".*" -x "__MACOSX" -x "*.git*"
+          
+          # Fengchi Patch for OPAce5Pro - this is specific and won't run for larry
           if [ "${{ inputs.model }}" == "OPAce5Pro" ]; then
-            sed -i 's/hmbird/xxbird/g' dtbo.img
-            zip -r "../$ZIP_NAME-CN-version.zip" ./*
+            echo "Applying OPAce5Pro specific modifications for CN version..."
+            # Create a temporary copy or work on a duplicate if original dtbo is needed elsewhere
+            cp dtbo.img dtbo_cn.img
+            sed -i 's/hmbird/xxbird/g' dtbo_cn.img
+            # Zip with the modified dtbo, ensure other files are as intended for CN version
+            zip -r9 "../${ZIP_NAME%.zip}-CN-version.zip" ./* -x ".*" -x "__MACOSX" -x "*.git*" -x dtbo.img -x "dtbo_cn.img" # Exclude original dtbo if not needed
+            # After zipping, if you want to include dtbo_cn.img as dtbo.img in the zip:
+            # mv dtbo_cn.img dtbo.img
+            # zip -r9 "../${ZIP_NAME%.zip}-CN-version.zip" ./* -x ".*" -x "__MACOSX" -x "*.git*"
+            # mv dtbo.img dtbo_cn.img # Or restore original if needed
+            # For simplicity, if the CN zip should just have the modified dtbo:
+            mv dtbo_cn.img dtbo.img # Temporarily replace dtbo.img with the CN version
+            zip -r9 "../${ZIP_NAME%.zip}-CN-version.zip" ./* -x ".*" -x "__MACOSX" -x "*.git*"
+            # It's safer to clean up or restore the original dtbo.img if AnyKernel3 is used further
+            # For now, this assumes the last zip is the final step for this particular set of files.
+            # If you need to restore, you'd have to cp the original dtbo.img back.
+            # To be safer:
+            # {
+            #   cp dtbo.img dtbo.img.bak
+            #   sed -i 's/hmbird/xxbird/g' dtbo.img
+            #   zip -r9 "../${ZIP_NAME%.zip}-CN-version.zip" ./* -x ".*" -x "__MACOSX" -x "*.git*" -x "*.bak"
+            #   mv dtbo.img.bak dtbo.img
+            # }
           fi
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-${{ env.CONFIG }}
+          name: kernel-${{ env.CONFIG }}-${{ inputs.android_version }}-${{ env.KSUVER }}
           path: |
             *.zip
