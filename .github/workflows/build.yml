@@ -24,23 +24,23 @@ on:
         type: string
         default: 'sm6375'
       kernel_source_branch:
-        description: 'Kernel source branch for Teamhackneyed/android_kernel_oneplus_sm6375'
+        description: 'Kernel source branch for Teamhackneyed (e.g., lineage-22.2 for 5.4)'
         required: true
         type: string
-        default: 'lineage-22.2'
+        default: 'lineage-22.2' # Matches your kernel
       android_version_name:
-        description: 'Android version name (e.g., 13, 14)'
+        description: 'Android version name (e.g., 15 for Lineage 22)'
         required: true
         type: string
-        default: '15'
+        default: '15' # Matches your Lineage version
       kernel_version_string:
-        description: 'Kernel version string (e.g., 5.4, 5.10). Critical for SUSFS patch selection.'
+        description: 'Kernel version string (e.g., 5.4). Must match kernel AND SUSFS patch.'
         required: true
         type: string
-        default: '5.4'
+        default: '5.4' # Matches your kernel's Makefile
 
 jobs:
-  build_kernel_final_structure:
+  build_kernel_with_susfs_attempt:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
@@ -76,7 +76,7 @@ jobs:
             git curl python3 python-is-python3 tree \
             build-essential bc libssl-dev libelf-dev \
             bison flex rsync libncurses-dev \
-            zip unzip tar gzip bzip2 lzop patch > /dev/null 2>&1
+            zip unzip tar gzip bzip2 lzop patch awk > /dev/null 2>&1 # Added awk
           echo "System setup complete."
 
       - name: Install Repo Tool
@@ -88,78 +88,44 @@ jobs:
 
       - name: Set Common Environment Variables
         run: |
-          echo "MODEL_CODENAME (from job env) is: ${{ env.MODEL_CODENAME }}"
-          echo "KERNEL_DIR (from job env) is: ${{ env.KERNEL_DIR }}"
+          echo "MODEL_CODENAME: ${{ env.MODEL_CODENAME }}"
+          echo "KERNEL_DIR: ${{ env.KERNEL_DIR }}"
 
       - name: Clone External Dependencies (AnyKernel3, Patches, SUSFS sources)
         run: |
-          echo "Cloning dependencies into $GITHUB_WORKSPACE..."
           ANYKERNEL_BRANCH="gki"
-          SUSFS_BRANCH="kernel-${{ inputs.kernel_version_string }}"
+          SUSFS_BRANCH="kernel-${{ inputs.kernel_version_string }}" # Will be kernel-5.4
 
           git clone https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH" ${{ github.workspace }}/AnyKernel3
           git clone https://github.com/TheWildJames/kernel_patches.git ${{ github.workspace }}/kernel_patches
           
           echo "Attempting to clone simonpunk/susfs4ksu branch: $SUSFS_BRANCH"
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH" ${{ github.workspace }}/susfs4ksu || \
-            (echo "Failed to clone $SUSFS_BRANCH from susfs4ksu, trying default branch (main/master)..." && \
+            (echo "Failed to clone $SUSFS_BRANCH from susfs4ksu, trying default branch..." && \
              git clone https://gitlab.com/simonpunk/susfs4ksu.git ${{ github.workspace }}/susfs4ksu)
           
-          if [ ! -d "${{ github.workspace }}/susfs4ksu" ]; then
-            echo "ERROR: Failed to clone susfs4ksu repository." >&2; exit 1;
-          fi
+          if [ ! -d "${{ github.workspace }}/susfs4ksu" ]; then echo "ERROR: Failed to clone susfs4ksu." >&2; exit 1; fi
           ls -alh ${{ github.workspace }}
 
       - name: Clone Kernel Source
         run: |
-          echo "Creating kernel parent directory: ${{ env.KERNEL_SOURCE_PARENT_DIR }}"
-          mkdir -p "${{ env.KERNEL_SOURCE_PARENT_DIR }}"
-          cd "${{ env.KERNEL_SOURCE_PARENT_DIR }}"
-          echo "Cloning kernel into $(basename ${{ env.KERNEL_DIR }})..."
+          mkdir -p "${{ env.KERNEL_SOURCE_PARENT_DIR }}" && cd "${{ env.KERNEL_SOURCE_PARENT_DIR }}"
           git clone "${{ env.KERNEL_SOURCE_REPO_URL }}" -b "${{ env.KERNEL_SOURCE_BRANCH }}" "$(basename ${{ env.KERNEL_DIR }})" --depth=1
-          if [ ! -d "${{ env.KERNEL_DIR }}" ]; then echo "ERROR: Kernel directory ${{ env.KERNEL_DIR }} not found." >&2; exit 1; fi
-
-      - name: List Initial Kernel Source Contents
-        run: |
-          cd "${{ env.KERNEL_DIR }}"
-          echo "Contents of ${{ env.KERNEL_DIR }}:"; ls -alh
-          if [ -f "./arch/arm64/configs/gki_defconfig" ]; then echo "Found: ./arch/arm64/configs/gki_defconfig"; else echo "NOT FOUND: ./arch/arm64/configs/gki_defconfig"; fi
+          if [ ! -d "${{ env.KERNEL_DIR }}" ]; then echo "ERROR: Kernel directory not found." >&2; exit 1; fi
 
       - name: Add KernelSU Next (Two-Stage using rifsxd/KernelSU-Next)
         run: |
           cd "${{ env.KERNEL_DIR }}"
-          
-          echo "Stage 1: Adding base KernelSU-Next from rifsxd/KernelSU-Next (next branch)..."
-          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -
-          # If the above script needs an argument like '-s next', add it. Default is often fine.
-
-          echo "Stage 2: Integrating/Updating with next-susfs components from rifsxd/KernelSU-Next..."
-          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s next-susfs
-
-          echo "KernelSU-Next setup (both stages) completed."
-          echo "Running git submodule update --init --recursive after KSU setups..."
-          ( test -d .git || git init -b temp_ksu_submodule_fix ) && git submodule update --init --recursive && (git rev-parse --abbrev-ref HEAD 2>/dev/null | grep -q temp_ksu_submodule_fix && git branch -D temp_ksu_submodule_fix || true)
-
+          echo "Stage 1: Adding base KSU-Next (rifsxd/next)..."; curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -
+          echo "Stage 2: Integrating SUSFS (rifsxd/next-susfs)..."; curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s next-susfs
+          echo "Running git submodule update..."; ( test -d .git || git init -b temp_ksu_fix ) && git submodule update --init --recursive && (git rev-parse --abbrev-ref HEAD 2>/dev/null | grep -q temp_ksu_fix && git branch -D temp_ksu_fix || true)
           if [ -d "./KernelSU-Next/kernel" ]; then
-            echo "KernelSU-Next/kernel directory found."
             (cd KernelSU-Next && echo "KSU-Next Described: $(git describe --tags --always)")
-            if [ -f "./KernelSU-Next/kernel/Makefile" ] && grep -q "DKSU_VERSION=" "./KernelSU-Next/kernel/Makefile"; then
-              KSUVER_FROM_MAKEFILE=$(grep "DKSU_VERSION=" "./KernelSU-Next/kernel/Makefile" | cut -d'=' -f2 | tr -d '[:space:]')
-              if [[ "$KSUVER_FROM_MAKEFILE" =~ ^[0-9]+$ ]]; then
-                echo "KSUVER extracted for zip naming: $KSUVER_FROM_MAKEFILE"
-                echo "KSUVER=$KSUVER_FROM_MAKEFILE" >> $GITHUB_ENV
-              else echo "Warning: Could not parse KSUVER from Makefile: $KSUVER_FROM_MAKEFILE"; fi
-            else echo "Warning: DKSU_VERSION not found in KSU Makefile for KSUVER extraction."; fi
-          else
-            echo "ERROR: KernelSU-Next/kernel directory NOT found after rifsxd setup scripts." >&2; exit 1;
-          fi
-          
-          echo "Searching for INODE_STATE_SUS_KSTAT definition post KSU setups..."
-          if grep -qE -R "INODE_STATE_SUS_KSTAT|SUS_KSTAT_BIT" ./include ./KernelSU-Next; then # Check KSU-Next too
-             echo "INODE_STATE_SUS_KSTAT or SUS_KSTAT_BIT related definition MIGHT be present (could be just within KSU-Next)."
-          else
-             echo "WARNING: INODE_STATE_SUS_KSTAT or SUS_KSTAT_BIT definition NOT found after rifsxd setups. Main SUSFS patching step will be critical."
-          fi
+            if [ -f "./KernelSU-Next/kernel/Makefile" ] && KSUVER_LINE=$(grep "^DKSU_VERSION=" "./KernelSU-Next/kernel/Makefile" | head -n1); then
+              KSUVER_FROM_MAKEFILE=$(echo "$KSUVER_LINE" | cut -d'=' -f2 | tr -d '[:space:]')
+              if [[ "$KSUVER_FROM_MAKEFILE" =~ ^[0-9]+$ ]]; then echo "KSUVER=$KSUVER_FROM_MAKEFILE" >> $GITHUB_ENV; fi
+            fi
+          else echo "ERROR: KSU-Next/kernel dir NOT found." >&2; exit 1; fi
 
       - name: Apply SUSFS Core Patches to Kernel Tree
         id: susfs_core_patch_step
@@ -168,105 +134,77 @@ jobs:
           PATCH_LOG_DIR="$GITHUB_WORKSPACE/patch_logs"; mkdir -p "$PATCH_LOG_DIR"
           SUSFS_SOURCE_DIR="$GITHUB_WORKSPACE/susfs4ksu"
           MAIN_SUSFS_PATCH_FILENAME="50_add_susfs_in_kernel-${{ inputs.kernel_version_string }}.patch"
-          MAIN_SUSFS_PATCH_PATH="$SUSFS_SOURCE_DIR/kernel_patches/$MAIN_SUSFS_PATCH_FILENAME"
+          ORIGINAL_PATCH_PATH="$SUSFS_SOURCE_DIR/kernel_patches/$MAIN_SUSFS_PATCH_FILENAME"
+          FILTERED_PATCH_PATH="${ORIGINAL_PATCH_PATH}.nobootconfig"
 
-          if [ ! -d "$SUSFS_SOURCE_DIR/kernel_patches" ]; then
-            echo "ERROR: $SUSFS_SOURCE_DIR/kernel_patches not found. Cannot apply SUSFS core patches." >&2
-            echo "::set-output name=patch_status::skipped_no_source_patches"
-            exit 0 
-          fi
+          if [ ! -d "$SUSFS_SOURCE_DIR/kernel_patches" ]; then echo "ERROR: $SUSFS_SOURCE_DIR/kernel_patches not found." >&2; exit 0; fi
           echo "Applying SUSFS core patches from $SUSFS_SOURCE_DIR to kernel root..."
-          echo "Copying SUSFS fs/* files..."; if [ -d "$SUSFS_SOURCE_DIR/kernel_patches/fs" ]; then cp -rf "$SUSFS_SOURCE_DIR/kernel_patches/fs/"* ./fs/; else echo "Warning: fs dir not found in SUSFS source."; fi
-          echo "Copying SUSFS include/linux/* files..."; if [ -d "$SUSFS_SOURCE_DIR/kernel_patches/include/linux" ]; then cp -rf "$SUSFS_SOURCE_DIR/kernel_patches/include/linux/"* ./include/linux/; else echo "Warning: include/linux dir not found in SUSFS source."; fi
+          echo "Copying SUSFS fs/* files..."; if [ -d "$SUSFS_SOURCE_DIR/kernel_patches/fs" ]; then cp -rf "$SUSFS_SOURCE_DIR/kernel_patches/fs/"* ./fs/; fi
+          echo "Copying SUSFS include/linux/* files..."; if [ -d "$SUSFS_SOURCE_DIR/kernel_patches/include/linux" ]; then cp -rf "$SUSFS_SOURCE_DIR/kernel_patches/include/linux/"* ./include/linux/; fi
 
-          if [ -f "$MAIN_SUSFS_PATCH_PATH" ]; then
-            echo "Applying main SUSFS patch: $MAIN_SUSFS_PATCH_FILENAME..."
-            patch -p1 < "$MAIN_SUSFS_PATCH_PATH" > "$PATCH_LOG_DIR/susfs_core_patch.log" 2>&1
+          if [ -f "$ORIGINAL_PATCH_PATH" ]; then
+            echo "Filtering out fs/proc/bootconfig.c changes from $MAIN_SUSFS_PATCH_FILENAME..."
+            awk '
+              /^diff --git a\/fs\/proc\/bootconfig.c / {in_bootconfig_diff=1; next}
+              /^diff --git / {in_bootconfig_diff=0}
+              !in_bootconfig_diff {print}
+            ' "$ORIGINAL_PATCH_PATH" > "$FILTERED_PATCH_PATH"
+            
+            echo "Applying filtered SUSFS patch: $(basename $FILTERED_PATCH_PATH)..."
+            patch -p1 < "$FILTERED_PATCH_PATH" > "$PATCH_LOG_DIR/susfs_core_patch.log" 2>&1
             PATCH_EXIT_CODE=$?
-            if [ $PATCH_EXIT_CODE -eq 0 ]; then echo "Main SUSFS patch applied successfully."; echo "::set-output name=patch_status::success";
-            else echo "ERROR: Main SUSFS patch FAILED (Code: $PATCH_EXIT_CODE). Check log." >&2; echo "::set-output name=patch_status::failed"; fi 
-          else echo "ERROR: Main SUSFS patch file not found: $MAIN_SUSFS_PATCH_PATH" >&2; echo "::set-output name=patch_status::skipped_no_patch_file"; fi 
+            if [ $PATCH_EXIT_CODE -eq 0 ]; then echo "SUSFS patch applied successfully (bootconfig part skipped)."; 
+            elif [ $PATCH_EXIT_CODE -eq 1 ]; then echo "WARNING: SUSFS patch applied with FAILED hunks (Code: $PATCH_EXIT_CODE). Check log." >&2; # Treat fuzz/failures as warning for now
+            else echo "ERROR: SUSFS patch command had a critical error (Code: $PATCH_EXIT_CODE). Check log." >&2; exit $PATCH_EXIT_CODE; fi
+          else echo "ERROR: Main SUSFS patch file not found: $ORIGINAL_PATCH_PATH" >&2; exit 1; fi
           
           echo "Verifying SUSFS integration post-patching..."
           if [ -f "./include/linux/susfs.h" ]; then echo "./include/linux/susfs.h FOUND."; else echo "CRITICAL ERROR: ./include/linux/susfs.h NOT FOUND." >&2; fi
           if grep -qE -R "INODE_STATE_SUS_KSTAT|SUS_KSTAT_BIT" ./include; then echo "SUSFS KSTAT definition seems present in kernel headers."; else echo "CRITICAL WARNING: SUSFS KSTAT definition NOT found. Build will likely fail."; fi
 
-      - name: Apply KSUN Hooks Patch
+      - name: Apply Other Misc Patches (Hooks, Hide Stuff)
         run: |
           cd "${{ env.KERNEL_DIR }}"
           PATCH_LOG_DIR="$GITHUB_WORKSPACE/patch_logs"; mkdir -p "$PATCH_LOG_DIR"
-          echo "Applying KSUN Hooks..."
-          if [ -f "$GITHUB_WORKSPACE/kernel_patches/next/syscall_hooks.patch" ]; then
-            cp "$GITHUB_WORKSPACE/kernel_patches/next/syscall_hooks.patch" ./
-            patch -p1 --fuzz=3 < ./syscall_hooks.patch > "$PATCH_LOG_DIR/ksun_hooks_patch.log" 2>&1 || echo "KSUN Hooks patch had issues, check log."
-          else echo "KSUN Hooks patch not found, skipping."; fi
+          echo "Applying KSUN Hooks..."; if [ -f "$GITHUB_WORKSPACE/kernel_patches/next/syscall_hooks.patch" ]; then cp "$GITHUB_WORKSPACE/kernel_patches/next/syscall_hooks.patch" ./ && patch -p1 --fuzz=3 < ./syscall_hooks.patch > "$PATCH_LOG_DIR/ksun_hooks_patch.log" 2>&1 || echo "KSUN Hooks patch issues."; else echo "KSUN Hooks patch skip."; fi
+          echo "Applying Hide Stuff Patches..."; if [ -f "$GITHUB_WORKSPACE/kernel_patches/69_hide_stuff.patch" ]; then cp "$GITHUB_WORKSPACE/kernel_patches/69_hide_stuff.patch" ./ && patch -p1 -F 3 < 69_hide_stuff.patch > "$PATCH_LOG_DIR/hide_stuff_patch.log" 2>&1 || echo "Hide Stuff patch issues."; else echo "Hide Stuff patch skip."; fi
 
-      - name: Apply Hide Stuff Patch
-        run: |
-          cd "${{ env.KERNEL_DIR }}"
-          PATCH_LOG_DIR="$GITHUB_WORKSPACE/patch_logs"; mkdir -p "$PATCH_LOG_DIR"
-          echo "Applying Hide Stuff Patches..."
-          if [ -f "$GITHUB_WORKSPACE/kernel_patches/69_hide_stuff.patch" ]; then
-            cp "$GITHUB_WORKSPACE/kernel_patches/69_hide_stuff.patch" .
-            patch -p1 -F 3 < 69_hide_stuff.patch > "$PATCH_LOG_DIR/hide_stuff_patch.log" 2>&1 || echo "Hide Stuff patch had issues, check log."
-          else echo "Hide Stuff patch not found, skipping."; fi
-
-      - name: Add KernelSU and SUSFS Settings to Defconfig
+      - name: Modify Defconfig Settings
         shell: bash
         run: |
           set -e; cd "${{ env.KERNEL_DIR }}"
-          DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"; echo "Adding KSU/SUSFS settings to $DEFCONFIG_PATH..."
+          DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"; echo "Modifying $DEFCONFIG_PATH..."
           if [ ! -f "$DEFCONFIG_PATH" ]; then mkdir -p "$(dirname "$DEFCONFIG_PATH")" && touch "$DEFCONFIG_PATH"; fi
           add_cfg() { grep -qxF "$1" "$DEFCONFIG_PATH" || echo "$1" >> "$DEFCONFIG_PATH"; }
+          set_cfg() { if grep -q "^$1=" "$DEFCONFIG_PATH"; then sed -i "s|^$1=.*|$1=$2|" "$DEFCONFIG_PATH"; else echo "$1=$2" >> "$DEFCONFIG_PATH"; fi; }
+          # KSU/SUSFS
           add_cfg "CONFIG_KSU=y"; add_cfg "CONFIG_KSU_KPROBES_HOOK=n"; add_cfg "CONFIG_KSU_SUSFS=y"
           add_cfg "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y"; add_cfg "CONFIG_KSU_SUSFS_SUS_PATH=y"; add_cfg "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
           add_cfg "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y"; add_cfg "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y"
           add_cfg "CONFIG_KSU_SUSFS_SUS_KSTAT=y"; add_cfg "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n"; add_cfg "CONFIG_KSU_SUSFS_TRY_UMOUNT=y"
           add_cfg "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y"; add_cfg "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
           add_cfg "CONFIG_KSU_SUSFS_ENABLE_LOG=y"; add_cfg "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
-          add_cfg "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"; add_cfg "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
-          add_cfg "CONFIG_KSU_SUSFS_SUS_SU=n"; add_cfg "CONFIG_TMPFS_XATTR=y"; add_cfg "CONFIG_TMPFS_POSIX_ACL=y"
-
-      - name: Add BBR Support Settings to Defconfig
-        shell: bash
-        run: |
-          set -e; cd "${{ env.KERNEL_DIR }}"
-          DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"; echo "Adding BBR settings to $DEFCONFIG_PATH..."
-          if [ ! -f "$DEFCONFIG_PATH" ]; then echo "Warning: $DEFCONFIG_PATH not found for BBR." >&2; exit 0; fi
-          add_cfg() { grep -qxF "$1" "$DEFCONFIG_PATH" || echo "$1" >> "$DEFCONFIG_PATH"; }
-          set_cfg() { if grep -q "^$1=" "$DEFCONFIG_PATH"; then sed -i "s|^$1=.*|$1=$2|" "$DEFCONFIG_PATH"; else echo "$1=$2" >> "$DEFCONFIG_PATH"; fi; }
+          add_cfg "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=n"; # Explicitly disable due to missing bootconfig.c
+          add_cfg "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"; add_cfg "CONFIG_KSU_SUSFS_SUS_SU=n"
+          add_cfg "CONFIG_TMPFS_XATTR=y"; add_cfg "CONFIG_TMPFS_POSIX_ACL=y"
+          # BBR
           add_cfg "CONFIG_TCP_CONG_ADVANCED=y"; add_cfg "CONFIG_TCP_CONG_BBR=y"; set_cfg "CONFIG_DEFAULT_TCP_CONG" "\"bbr\""
           set_cfg "CONFIG_TCP_CONG_BIC" "n"; set_cfg "CONFIG_TCP_CONG_WESTWOOD" "n"; set_cfg "CONFIG_TCP_CONG_HTCP" "n"
           add_cfg "CONFIG_NET_SCH_FQ=y"; add_cfg "CONFIG_NET_SCH_FQ_CODEL=y"
-
-      - name: Add TTL Target Settings to Defconfig
-        shell: bash
-        run: |
-          set -e; cd "${{ env.KERNEL_DIR }}"
-          DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"; echo "Adding TTL settings to $DEFCONFIG_PATH..."
-          if [ ! -f "$DEFCONFIG_PATH" ]; then echo "Warning: $DEFCONFIG_PATH not found for TTL." >&2; exit 0; fi
-          add_cfg() { grep -qxF "$1" "$DEFCONFIG_PATH" || echo "$1" >> "$DEFCONFIG_PATH"; }
+          # TTL
           add_cfg "CONFIG_IP_NF_TARGET_TTL=y"; add_cfg "CONFIG_IP6_NF_TARGET_HL=y"; add_cfg "CONFIG_IP6_NF_MATCH_HL=y"
+          # LTO
+          if grep -q "CONFIG_LTO=n" "$DEFCONFIG_PATH"; then sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG_PATH"; elif ! grep -q "CONFIG_LTO=y" "$DEFCONFIG_PATH"; then add_cfg "CONFIG_LTO=y"; fi
+          if grep -q "CONFIG_LTO=y" "$DEFCONFIG_PATH"; then if grep -q "CONFIG_LTO_CLANG_FULL=y" "$DEFCONFIG_PATH"; then sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG_PATH"; elif grep -q "CONFIG_LTO_CLANG_NONE=y" "$DEFCONFIG_PATH"; then sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG_PATH"; elif ! grep -q "CONFIG_LTO_CLANG_THIN=y" "$DEFCONFIG_PATH"; then add_cfg "CONFIG_LTO_CLANG_THIN=y"; fi; if grep -q "CONFIG_LTO_CLANG_THIN=y" "$DEFCONFIG_PATH"; then sed -i '/CONFIG_LTO_CLANG_FULL=y/d' "$DEFCONFIG_PATH"; sed -i '/CONFIG_LTO_CLANG_NONE=y/d' "$DEFCONFIG_PATH"; fi; fi
 
-      - name: Apply LTO, Versioning, and Other Final Tweaks
+      - name: Apply Final Versioning Tweaks
         shell: bash
         run: |
           set -e; cd "${{ env.KERNEL_DIR }}"
-          DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"; echo "Applying LTO and versioning tweaks..."
-          if [ -f "$DEFCONFIG_PATH" ]; then
-            add_cfg_fn() { grep -qxF "$1" "$DEFCONFIG_PATH" || echo "$1" >> "$DEFCONFIG_PATH"; }
-            if grep -q "CONFIG_LTO=n" "$DEFCONFIG_PATH"; then sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG_PATH"; elif ! grep -q "CONFIG_LTO=y" "$DEFCONFIG_PATH"; then add_cfg_fn "CONFIG_LTO=y"; fi
-            if grep -q "CONFIG_LTO=y" "$DEFCONFIG_PATH"; then 
-              if grep -q "CONFIG_LTO_CLANG_FULL=y" "$DEFCONFIG_PATH"; then sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG_PATH"; 
-              elif grep -q "CONFIG_LTO_CLANG_NONE=y" "$DEFCONFIG_PATH"; then sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG_PATH"; 
-              elif ! grep -q "CONFIG_LTO_CLANG_THIN=y" "$DEFCONFIG_PATH"; then add_cfg_fn "CONFIG_LTO_CLANG_THIN=y"; fi
-              if grep -q "CONFIG_LTO_CLANG_THIN=y" "$DEFCONFIG_PATH"; then sed -i '/CONFIG_LTO_CLANG_FULL=y/d' "$DEFCONFIG_PATH"; sed -i '/CONFIG_LTO_CLANG_NONE=y/d' "$DEFCONFIG_PATH"; fi
-            fi
-          else echo "Warning: $DEFCONFIG_PATH not found for LTO tweaks."; fi
           SETLOCALVERSION_PATHS=( "./scripts/setlocalversion" ); if [ -d "./msm-kernel/scripts" ]; then SETLOCALVERSION_PATHS+=( "./msm-kernel/scripts/setlocalversion" ); fi
-          for sl_path in "${SETLOCALVERSION_PATHS[@]}"; do if [ -f "$sl_path" ]; then sed -i '$s|echo "\$res"|echo "\$res-Wild"|' "$sl_path"; sed -i 's/-dirty//' "$sl_path"; else echo "$sl_path not found."; fi; done
+          for sl_path in "${SETLOCALVERSION_PATHS[@]}"; do if [ -f "$sl_path" ]; then sed -i '$s|echo "\$res"|echo "\$res-Wild"|' "$sl_path"; sed -i 's/-dirty//' "$sl_path"; fi; done
           DATESTR=$(date -u); MKCOMPILE_H_PATHS=( "./scripts/mkcompile_h" ); if [ -d "./msm-kernel/scripts" ]; then MKCOMPILE_H_PATHS+=( "./msm-kernel/scripts/mkcompile_h" ); fi
-          for mc_path in "${MKCOMPILE_H_PATHS[@]}"; do if [ -f "$mc_path" ]; then perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' "$mc_path"; else echo "$mc_path not found."; fi; done
+          for mc_path in "${MKCOMPILE_H_PATHS[@]}"; do if [ -f "$mc_path" ]; then perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' "$mc_path"; fi; done
 
       - name: Setup Clang Toolchain
         run: |
