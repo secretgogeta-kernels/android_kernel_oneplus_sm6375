@@ -144,7 +144,7 @@ jobs:
           
           # Initialize and sync kernel source
           echo "Initializing and syncing kernel source..."
-          $REPO init -u https://github.com/Teamhackneyed/android_kernel_oneplus_sm6375.git -b lineage-22.2 --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+          $REPO init -u https://github.com/Teamhackneyed/android_kernel_oneplus_sm6375.git -b lineage-22.2 --depth=1 --no-tags
           
           # Sync repo and apply patches
           $REPO --version
