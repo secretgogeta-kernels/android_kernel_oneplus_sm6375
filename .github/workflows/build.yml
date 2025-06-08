@@ -102,25 +102,22 @@ jobs:
 
       - name: Install Repo
         run: |
-          # Install dependencies
-          # python3 and python-is-python3 are installed in Setup System
           mkdir -p ./git-repo
           curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
           chmod a+rx ./git-repo/repo
           echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> $GITHUB_ENV
 
-      - name: Set CONFIG Environment Variable
+      - name: Set CONFIG_VAR_NAME Environment Variable
         run: |
-          CONFIG_VAR_NAME="${{ inputs.model }}" # Use a different name to avoid conflict with directory named 'larry'
+          CONFIG_VAR_NAME="${{ inputs.model }}"
           echo "CONFIG_VAR_NAME=$CONFIG_VAR_NAME" >> $GITHUB_ENV
           echo "CONFIG_VAR_NAME (model) set to: $CONFIG_VAR_NAME"
 
       - name: Clone AnyKernel3 and Other Dependencies
         run: |
           echo "Cloning AnyKernel3 and other dependencies into $GITHUB_WORKSPACE..."
-          
           ANYKERNEL_BRANCH="gki" 
-          SUSFS_BRANCH="kernel-5.4" # Adjust if your kernel_version (e.g., 5.10) needs a different susfs branch
+          SUSFS_BRANCH="kernel-5.4"
           
           echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
           echo "Using branch for SUSFS: $SUSFS_BRANCH"
@@ -133,18 +130,16 @@ jobs:
 
       - name: Clone Kernel Source
         run: |
-          KERNEL_SOURCE_DIR_NAME="android_kernel_oneplus_sm6375" # Define a name for the kernel source directory
-          # The $CONFIG_VAR_NAME (e.g., larry) will be the parent directory for the kernel source
+          KERNEL_SOURCE_DIR_NAME="android_kernel_oneplus_sm6375"
           KERNEL_PARENT_DIR="$GITHUB_WORKSPACE/${{ env.CONFIG_VAR_NAME }}"
 
           echo "Creating folder for kernel source: $KERNEL_PARENT_DIR/$KERNEL_SOURCE_DIR_NAME..."
-          mkdir -p "$KERNEL_PARENT_DIR" # Create the parent directory (e.g., larry)
-          cd "$KERNEL_PARENT_DIR"       # cd into the parent directory (e.g., larry)
+          mkdir -p "$KERNEL_PARENT_DIR"
+          cd "$KERNEL_PARENT_DIR"
           
           echo "Cloning kernel source for SM6375 into $(pwd)/$KERNEL_SOURCE_DIR_NAME..."
           git clone https://github.com/Teamhackneyed/android_kernel_oneplus_sm6375.git -b "${{ inputs.branch }}" "$KERNEL_SOURCE_DIR_NAME" --depth=1
           
-          # Set KERNEL_DIR path for other steps
           echo "KERNEL_DIR=$KERNEL_PARENT_DIR/$KERNEL_SOURCE_DIR_NAME" >> $GITHUB_ENV
           echo "Kernel source cloned into $KERNEL_PARENT_DIR/$KERNEL_SOURCE_DIR_NAME"
 
@@ -155,7 +150,6 @@ jobs:
           
           echo "--- Top Level Contents ---"
           ls -alh
-          
           echo "--- Contents of ./oplus/ ---"
           if [ -d "./oplus" ]; then ls -alh ./oplus; else echo "./oplus directory not found."; fi
           echo "--- Contents of ./oplus/build/ ---"
@@ -184,7 +178,6 @@ jobs:
           cd "${{ env.KERNEL_DIR }}"
           
           echo "Applying SUSFS patches for kernel version ${{ inputs.kernel_version }}..."
-          # Patches are now expected relative to GITHUB_WORKSPACE where susfs4ksu and kernel_patches were cloned
           if [ ! -f "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-${{ inputs.kernel_version }}.patch" ]; then
             echo "ERROR: SUSFS patch file 50_add_susfs_in_kernel-${{ inputs.kernel_version }}.patch not found in $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/"
             exit 1
@@ -211,7 +204,7 @@ jobs:
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
           sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
           
-          cd ../../ # Back to kernel root
+          cd ../../ 
           patch -p1 < ./50_add_susfs_in_kernel-${{ inputs.kernel_version }}.patch || true
 
       - name: Apply KSUN Hooks
@@ -303,7 +296,7 @@ EOF
           fi
 
       - name: Run sed and perl Commands
-        shell: /usr/bin/bash -e {0}
+        shell: bash # CORRECTED LINE
         run: |
           set -e 
           echo "Changing to kernel source directory: ${{ env.KERNEL_DIR }}..."
@@ -359,7 +352,6 @@ EOF
           done
           echo "Sed/Perl script finished."
 
-      # --- START OF MAKE-BASED BUILD ADAPTATION ---
       - name: Setup Clang Toolchain (AOSP Prebuilt)
         run: |
           echo "Setting up Clang toolchain..."
@@ -383,7 +375,7 @@ EOF
           echo "Clang Path set to: $CLANG_DIR/bin"
           clang --version || echo "clang command not found or failed after setup!"
 
-      - name: Build Kernel (using Make) # This replaces your old "Build the Kernel" step
+      - name: Build Kernel (using Make)
         env:
           KBUILD_BUILD_USER: ${{ github.actor }}
           KBUILD_BUILD_HOST: "GitHubActions"
@@ -391,7 +383,7 @@ EOF
           echo "Changing to kernel source directory: ${{ env.KERNEL_DIR }}..."
           cd "${{ env.KERNEL_DIR }}"
 
-          KERNEL_BUILD_OUT_DIR="$(pwd)/out" # Build output directory inside kernel source (e.g., .../sm6375/out)
+          KERNEL_BUILD_OUT_DIR="$(pwd)/out" 
           mkdir -p "$KERNEL_BUILD_OUT_DIR"
 
           echo "Building the kernel for SoC ${{ inputs.soc }} using make..."
@@ -409,14 +401,11 @@ EOF
           make $MAKE_ARGS gki_defconfig
           
           echo "Starting kernel build with args: $MAKE_ARGS Image dtbo.img"
-          make $MAKE_ARGS Image dtbo.img # Add 'modules' if needed
+          make $MAKE_ARGS Image dtbo.img
 
           echo "Build finished. Checking for artifacts in $KERNEL_BUILD_OUT_DIR..."
           tree -L 4 "$KERNEL_BUILD_OUT_DIR" || ls -R "$KERNEL_BUILD_OUT_DIR/arch/arm64/boot/"
 
-          # Prepare staging directory for artifacts for AnyKernel3
-          # This will be $GITHUB_WORKSPACE/${{ env.CONFIG_VAR_NAME }}/out_dist
-          # which is one level above KERNEL_BUILD_OUT_DIR, then into 'out_dist'
           ARTIFACT_STAGING_DIR="$(dirname "$KERNEL_BUILD_OUT_DIR")/out_dist"
           mkdir -p "$ARTIFACT_STAGING_DIR" 
           echo "Staging artifacts for AnyKernel3 in: $ARTIFACT_STAGING_DIR"
@@ -456,36 +445,26 @@ EOF
             echo "WARNING: dtbo.img not found. Searched paths:"
             printf '%s\n' "${DTBO_PATHS[@]}"
           fi
-          # --- END OF MAKE-BASED BUILD ADAPTATION ---
 
-      - name: Copy Images to AnyKernel3 # This step needs to correctly locate artifacts
+      - name: Copy Images to AnyKernel3
         run: |
-          # Artifacts are now in $GITHUB_WORKSPACE/${{ env.CONFIG_VAR_NAME }}/out_dist
           ARTIFACT_SOURCE_DIR="$GITHUB_WORKSPACE/${{ env.CONFIG_VAR_NAME }}/out_dist"
-          ANYKERNEL_DIR="$GITHUB_WORKSPACE/AnyKernel3" # AnyKernel3 is at workspace root
+          ANYKERNEL_DIR="$GITHUB_WORKSPACE/AnyKernel3"
 
           echo "Source artifact directory: $ARTIFACT_SOURCE_DIR"
           echo "Target AnyKernel3 directory: $ANYKERNEL_DIR"
 
-          if [ ! -d "$ARTIFACT_SOURCE_DIR" ]; then
-            echo "ERROR: Artifact staging directory $ARTIFACT_SOURCE_DIR not found."
-            exit 1
-          fi
-          if [ ! -f "$ARTIFACT_SOURCE_DIR/Image" ]; then
-            echo "ERROR: $ARTIFACT_SOURCE_DIR/Image not found."
-            exit 1
-          fi
+          if [ ! -d "$ARTIFACT_SOURCE_DIR" ]; then echo "ERROR: Artifact staging directory $ARTIFACT_SOURCE_DIR not found."; exit 1; fi
+          if [ ! -f "$ARTIFACT_SOURCE_DIR/Image" ]; then echo "ERROR: $ARTIFACT_SOURCE_DIR/Image not found."; exit 1; fi
 
           echo "Copying Images to $ANYKERNEL_DIR..."
           cp "$ARTIFACT_SOURCE_DIR/Image" "$ANYKERNEL_DIR/Image"
           
           if [ "${{ inputs.model }}" == "OPAce5Pro" ]; then
             if [ -f "$ARTIFACT_SOURCE_DIR/dtbo.img" ]; then cp "$ARTIFACT_SOURCE_DIR/dtbo.img" "$ANYKERNEL_DIR/"; else echo "Warning: dtbo.img not found for OPAce5Pro in $ARTIFACT_SOURCE_DIR"; fi
-            # if [ -f "$ARTIFACT_SOURCE_DIR/system_dlkm.erofs.img" ]; then cp "$ARTIFACT_SOURCE_DIR/system_dlkm.erofs.img" "$ANYKERNEL_DIR/system_dlkm.img"; else echo "Warning: system_dlkm.erofs.img not found"; fi
           elif [ "${{ inputs.model }}" == "larry" ]; then
             echo "Copying images for larry (OnePlus Nord CE 3 Lite 5G)"
             if [ -f "$ARTIFACT_SOURCE_DIR/dtbo.img" ]; then cp "$ARTIFACT_SOURCE_DIR/dtbo.img" "$ANYKERNEL_DIR/dtbo.img"; else echo "Warning: dtbo.img not found for larry in $ARTIFACT_SOURCE_DIR"; fi
-            # vendor_boot.img / vendor_dlkm.img are not expected from this basic make build
             if [ -f "$ARTIFACT_SOURCE_DIR/vendor_boot.img" ]; then cp "$ARTIFACT_SOURCE_DIR/vendor_boot.img" "$ANYKERNEL_DIR/vendor_boot.img"; echo "Copied vendor_boot.img"; fi
             if [ -f "$ARTIFACT_SOURCE_DIR/vendor_dlkm.img" ]; then cp "$ARTIFACT_SOURCE_DIR/vendor_dlkm.img" "$ANYKERNEL_DIR/vendor_dlkm.img"; echo "Copied vendor_dlkm.img"; fi
             if [ ! -f "$ARTIFACT_SOURCE_DIR/vendor_boot.img" ] && [ ! -f "$ARTIFACT_SOURCE_DIR/vendor_dlkm.img" ]; then echo "Info: Neither vendor_boot.img nor vendor_dlkm.img found (expected)."; fi
@@ -498,7 +477,6 @@ EOF
           cd "$ANYKERNEL_DIR"
           
           ZIP_NAME="${{ inputs.model }}_A${{ inputs.android_version }}_K${{ inputs.kernel_version }}_KSUNext_${{ env.KSUVER }}_SUSFS_AnyKernel3.zip"
-          # Create zip in parent directory ($GITHUB_WORKSPACE)
           echo "Creating zip file ../$ZIP_NAME from $(pwd)..."
           zip -r9 "../$ZIP_NAME" ./* -x ".git/*" -x ".github/*" -x "__MACOSX"
           
@@ -507,7 +485,6 @@ EOF
             if [ ! -f "./dtbo.img" ]; then
                 echo "Warning: dtbo.img not found in AnyKernel3 for OPAce5Pro CN version. Skipping."
             else
-                # Temp dir in $GITHUB_WORKSPACE (parent of current dir)
                 mkdir -p ../cn_zip_temp 
                 cp -r ./* ../cn_zip_temp/
                 sed -i 's/hmbird/xxbird/g' ../cn_zip_temp/dtbo.img
@@ -515,15 +492,14 @@ EOF
                 rm -rf ../cn_zip_temp
             fi
           fi
-          # Go back to $GITHUB_WORKSPACE to ensure upload paths are relative to workspace root
-          cd "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE" 
           echo "Listing ZIP files in $GITHUB_WORKSPACE:"
           ls -alh *.zip
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-${{ env.CONFIG_VAR_NAME }}-${{ inputs.android_version }}-${{ env.KSUVER }} # Use CONFIG_VAR_NAME
+          name: kernel-${{ env.CONFIG_VAR_NAME }}-${{ inputs.android_version }}-${{ env.KSUVER }}
           path: |
-            *.zip # Upload all zip files from the GITHUB_WORKSPACE root
+            *.zip 
           if-no-files-found: error
