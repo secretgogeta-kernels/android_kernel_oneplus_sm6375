@@ -4,7 +4,7 @@ permissions:
   actions: write   # Allows triggering actions
 
 on:
-  workflow_call: # This allows this workflow to be called from another workflow
+  workflow_call:
     inputs:
       model:
         required: true
@@ -13,9 +13,6 @@ on:
         required: true
         type: string
       branch:
-        required: true
-        type: string
-      manifest:
         required: true
         type: string
       android_version:
@@ -29,7 +26,7 @@ on:
         type: string
         default: stable
 
-  workflow_dispatch: # This allows this workflow to be called from another workflow
+  workflow_dispatch:
     inputs:
       model:
         description: 'Device model codename (e.g., OPAce5Pro)'
@@ -41,10 +38,6 @@ on:
         type: string
       branch:
         description: 'Kernel source branch'
-        required: true
-        type: string
-      manifest:
-        description: 'Manifest name'
         required: true
         type: string
       android_version:
@@ -60,7 +53,6 @@ on:
         required: true
         type: string
         default: stable
-
 
 jobs:
   build-kernel-oneplus-kernelsu-susfs:
@@ -136,20 +128,15 @@ jobs:
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH"
           git clone https://github.com/TheWildJames/kernel_patches.git
 
-      - name: Initialize and Sync Kernel Source
+      - name: Clone Kernel Source
         run: |
           echo "Creating folder for configuration: $CONFIG..."
           mkdir -p "$CONFIG"
           cd "$CONFIG"
           
-          # Initialize and sync kernel source
-          echo "Initializing and syncing kernel source..."
-          $REPO init -u https://github.com/Teamhackneyed/android_kernel_oneplus_sm6375.git -b lineage-22.2 --depth=1 --no-tags
+          echo "Cloning kernel source..."
+          git clone https://github.com/Teamhackneyed/android_kernel_oneplus_sm6375.git -b "${{ inputs.branch }}" --depth=1 .
           
-          # Sync repo and apply patches
-          $REPO --version
-          $REPO --trace sync -c --no-clone-bundle --no-tags --optimized-fetch -j$(nproc --all) --fail-fast
-      
       - name: Add KernelSU Next
         run: |
           echo "Changing to configuration directory: $CONFIG..."
