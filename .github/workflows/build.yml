@@ -303,21 +303,24 @@ jobs:
             grep -qxF "CONFIG_NET_SCH_FQ_CODEL=y" "$DEFCONFIG_PATH" || echo "CONFIG_NET_SCH_FQ_CODEL=y" >> "$DEFCONFIG_PATH"
             echo "BBR settings applied to $DEFCONFIG_PATH."
           fi
-      
+          
       - name: Add TTL Target Support (Optional Netfilter Feature)
+        shell: bash # Use bash for consistency
         run: |
+          set -e # Good practice to include
           echo "Changing to kernel source directory: ${{ env.KERNEL_DIR }}..."
           cd "${{ env.KERNEL_DIR }}"
           DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"
-          if [ -f "$DEFCONFIG_PATH" ]; then
-            echo "Adding TTL target configuration settings to $DEFCONFIG_PATH..."
-            cat <<EOF >> $DEFCONFIG_PATH
-            CONFIG_IP_NF_TARGET_TTL=y
-            CONFIG_IP6_NF_TARGET_HL=y
-            CONFIG_IP6_NF_MATCH_HL=y
-            EOF
+          
+          if [ ! -f "$DEFCONFIG_PATH" ]; then
+            echo "Warning: $DEFCONFIG_PATH not found in TTL step. Skipping TTL config."
           else
-            echo "Warning: $DEFCONFIG_PATH not found in TTL step. Skipping."
+            echo "Adding TTL target configuration settings to $DEFCONFIG_PATH..."
+            # Use grep to add only if not already present, prevents duplicates
+            grep -qxF "CONFIG_IP_NF_TARGET_TTL=y" "$DEFCONFIG_PATH" || echo "CONFIG_IP_NF_TARGET_TTL=y" >> "$DEFCONFIG_PATH"
+            grep -qxF "CONFIG_IP6_NF_TARGET_HL=y" "$DEFCONFIG_PATH" || echo "CONFIG_IP6_NF_TARGET_HL=y" >> "$DEFCONFIG_PATH"
+            grep -qxF "CONFIG_IP6_NF_MATCH_HL=y" "$DEFCONFIG_PATH" || echo "CONFIG_IP6_NF_MATCH_HL=y" >> "$DEFCONFIG_PATH"
+            echo "TTL Target settings applied to $DEFCONFIG_PATH."
           fi
 
       - name: Run sed and perl Commands
