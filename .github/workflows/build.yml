@@ -259,29 +259,51 @@ jobs:
           EOF
 
       - name: Add BBR Support (Optional TCP Congestion Control)
+        # Using shell: bash for consistency with other multiline scripts
         shell: bash
         run: |
           set -e
           echo "Changing to kernel source directory: ${{ env.KERNEL_DIR }}..."
           cd "${{ env.KERNEL_DIR }}"
           DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"
-          if [ -f "$DEFCONFIG_PATH" ]; then
-            echo "Adding BBR configuration settings to $DEFCONFIG_PATH..."
-            # Using <<-EOF to allow indentation within the heredoc in the script
-            cat <<-EOF >> "$DEFCONFIG_PATH"
-              CONFIG_TCP_CONG_ADVANCED=y
-              CONFIG_TCP_CONG_BBR=y
-              CONFIG_DEFAULT_TCP_CONG="bbr"
-              CONFIG_TCP_CONG_BIC=n
-              CONFIG_TCP_CONG_WESTWOOD=n
-              CONFIG_TCP_CONG_HTCP=n
-              CONFIG_NET_SCH_FQ=y
-              CONFIG_NET_SCH_FQ_CODEL=y
-            EOF # This EOF can also be indented (ideally with tabs if using <<-EOF)
+          
+          # Ensure defconfig path exists before appending
+          if [ ! -f "$DEFCONFIG_PATH" ]; then
+            echo "Warning: $DEFCONFIG_PATH not found in BBR step. Skipping BBR config."
           else
-            echo "Warning: $DEFCONFIG_PATH not found in BBR step. Skipping."
-          fi
+            echo "Adding BBR configuration settings to $DEFCONFIG_PATH..."
+            # Check if options already exist to avoid duplicates (optional, but good practice)
+            grep -qxF "CONFIG_TCP_CONG_ADVANCED=y" "$DEFCONFIG_PATH" || echo "CONFIG_TCP_CONG_ADVANCED=y" >> "$DEFCONFIG_PATH"
+            grep -qxF "CONFIG_TCP_CONG_BBR=y" "$DEFCONFIG_PATH" || echo "CONFIG_TCP_CONG_BBR=y" >> "$DEFCONFIG_PATH"
+            
+            # For default, remove old default if it exists, then add new one
+            sed -i '/CONFIG_DEFAULT_TCP_CONG=/d' "$DEFCONFIG_PATH"
+            echo "CONFIG_DEFAULT_TCP_CONG=\"bbr\"" >> "$DEFCONFIG_PATH"
+            
+            # Disable others (if they exist as =y, change to =n, otherwise add as =n)
+            if grep -q "CONFIG_TCP_CONG_BIC=y" "$DEFCONFIG_PATH"; then
+              sed -i 's/CONFIG_TCP_CONG_BIC=y/CONFIG_TCP_CONG_BIC=n/' "$DEFCONFIG_PATH"
+            elif ! grep -q "CONFIG_TCP_CONG_BIC=" "$DEFCONFIG_PATH"; then
+              echo "CONFIG_TCP_CONG_BIC=n" >> "$DEFCONFIG_PATH"
+            fi
+            
+            if grep -q "CONFIG_TCP_CONG_WESTWOOD=y" "$DEFCONFIG_PATH"; then
+              sed -i 's/CONFIG_TCP_CONG_WESTWOOD=y/CONFIG_TCP_CONG_WESTWOOD=n/' "$DEFCONFIG_PATH"
+            elif ! grep -q "CONFIG_TCP_CONG_WESTWOOD=" "$DEFCONFIG_PATH"; then
+              echo "CONFIG_TCP_CONG_WESTWOOD=n" >> "$DEFCONFIG_PATH"
+            fi
 
+            if grep -q "CONFIG_TCP_CONG_HTCP=y" "$DEFCONFIG_PATH"; then
+              sed -i 's/CONFIG_TCP_CONG_HTCP=y/CONFIG_TCP_CONG_HTCP=n/' "$DEFCONFIG_PATH"
+            elif ! grep -q "CONFIG_TCP_CONG_HTCP=" "$DEFCONFIG_PATH"; then
+              echo "CONFIG_TCP_CONG_HTCP=n" >> "$DEFCONFIG_PATH"
+            fi
+            
+            grep -qxF "CONFIG_NET_SCH_FQ=y" "$DEFCONFIG_PATH" || echo "CONFIG_NET_SCH_FQ=y" >> "$DEFCONFIG_PATH"
+            grep -qxF "CONFIG_NET_SCH_FQ_CODEL=y" "$DEFCONFIG_PATH" || echo "CONFIG_NET_SCH_FQ_CODEL=y" >> "$DEFCONFIG_PATH"
+            echo "BBR settings applied to $DEFCONFIG_PATH."
+          fi
+      
       - name: Add TTL Target Support (Optional Netfilter Feature)
         run: |
           echo "Changing to kernel source directory: ${{ env.KERNEL_DIR }}..."
