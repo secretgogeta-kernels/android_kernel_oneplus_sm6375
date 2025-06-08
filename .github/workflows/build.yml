@@ -47,8 +47,8 @@ jobs:
       MODEL_CODENAME: ${{ inputs.model }}
       KERNEL_SOURCE_REPO_URL: "https://github.com/Teamhackneyed/android_kernel_oneplus_sm6375.git"
       KERNEL_SOURCE_BRANCH: ${{ inputs.kernel_source_branch }}
-      KERNEL_SOURCE_PARENT_DIR: "${{ github.workspace }}/${{ inputs.model }}" # e.g., /home/runner/work/.../larry
-      KERNEL_DIR: "${{ github.workspace }}/${{ inputs.model }}/android_kernel_oneplus_sm6375" # Full path
+      KERNEL_SOURCE_PARENT_DIR: "${{ github.workspace }}/${{ inputs.model }}"
+      KERNEL_DIR: "${{ github.workspace }}/${{ inputs.model }}/android_kernel_oneplus_sm6375"
       DEBIAN_FRONTEND: noninteractive
 
     steps:
@@ -95,7 +95,7 @@ jobs:
         run: |
           echo "Cloning dependencies into $GITHUB_WORKSPACE..."
           ANYKERNEL_BRANCH="gki"
-          SUSFS_BRANCH="kernel-${{ inputs.kernel_version_string }}" # e.g. kernel-5.10
+          SUSFS_BRANCH="kernel-${{ inputs.kernel_version_string }}"
 
           git clone https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH" ${{ github.workspace }}/AnyKernel3
           git clone https://github.com/TheWildJames/kernel_patches.git ${{ github.workspace }}/kernel_patches
@@ -106,8 +106,7 @@ jobs:
              git clone https://gitlab.com/simonpunk/susfs4ksu.git ${{ github.workspace }}/susfs4ksu)
           
           if [ ! -d "${{ github.workspace }}/susfs4ksu" ]; then
-            echo "ERROR: Failed to clone susfs4ksu repository. This is needed for SUSFS patches." >&2
-            exit 1
+            echo "ERROR: Failed to clone susfs4ksu repository." >&2; exit 1;
           fi
           ls -alh ${{ github.workspace }}
 
@@ -126,13 +125,19 @@ jobs:
           echo "Contents of ${{ env.KERNEL_DIR }}:"; ls -alh
           if [ -f "./arch/arm64/configs/gki_defconfig" ]; then echo "Found: ./arch/arm64/configs/gki_defconfig"; else echo "NOT FOUND: ./arch/arm64/configs/gki_defconfig"; fi
 
-      - name: Add KernelSU Next (using rifsxd/next-susfs)
+      - name: Add KernelSU Next (Two-Stage using rifsxd/KernelSU-Next)
         run: |
           cd "${{ env.KERNEL_DIR }}"
-          echo "Adding KernelSU Next using rifsxd/KernelSU-Next/next-susfs setup..."
+          
+          echo "Stage 1: Adding base KernelSU-Next from rifsxd/KernelSU-Next (next branch)..."
+          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -
+          # If the above script needs an argument like '-s next', add it. Default is often fine.
+
+          echo "Stage 2: Integrating/Updating with next-susfs components from rifsxd/KernelSU-Next..."
           curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s next-susfs
 
-          echo "Running git submodule update --init --recursive after KSU setup..."
+          echo "KernelSU-Next setup (both stages) completed."
+          echo "Running git submodule update --init --recursive after KSU setups..."
           ( test -d .git || git init -b temp_ksu_submodule_fix ) && git submodule update --init --recursive && (git rev-parse --abbrev-ref HEAD 2>/dev/null | grep -q temp_ksu_submodule_fix && git branch -D temp_ksu_submodule_fix || true)
 
           if [ -d "./KernelSU-Next/kernel" ]; then
@@ -143,10 +148,17 @@ jobs:
               if [[ "$KSUVER_FROM_MAKEFILE" =~ ^[0-9]+$ ]]; then
                 echo "KSUVER extracted for zip naming: $KSUVER_FROM_MAKEFILE"
                 echo "KSUVER=$KSUVER_FROM_MAKEFILE" >> $GITHUB_ENV
-              fi
+              else echo "Warning: Could not parse KSUVER from Makefile: $KSUVER_FROM_MAKEFILE"; fi
             else echo "Warning: DKSU_VERSION not found in KSU Makefile for KSUVER extraction."; fi
           else
-            echo "ERROR: KernelSU-Next/kernel directory NOT found after rifsxd setup." >&2; exit 1;
+            echo "ERROR: KernelSU-Next/kernel directory NOT found after rifsxd setup scripts." >&2; exit 1;
+          fi
+          
+          echo "Searching for INODE_STATE_SUS_KSTAT definition post KSU setups..."
+          if grep -qE -R "INODE_STATE_SUS_KSTAT|SUS_KSTAT_BIT" ./include ./KernelSU-Next; then # Check KSU-Next too
+             echo "INODE_STATE_SUS_KSTAT or SUS_KSTAT_BIT related definition MIGHT be present (could be just within KSU-Next)."
+          else
+             echo "WARNING: INODE_STATE_SUS_KSTAT or SUS_KSTAT_BIT definition NOT found after rifsxd setups. Main SUSFS patching step will be critical."
           fi
 
       - name: Apply SUSFS Core Patches to Kernel Tree
@@ -155,14 +167,13 @@ jobs:
           cd "${{ env.KERNEL_DIR }}"
           PATCH_LOG_DIR="$GITHUB_WORKSPACE/patch_logs"; mkdir -p "$PATCH_LOG_DIR"
           SUSFS_SOURCE_DIR="$GITHUB_WORKSPACE/susfs4ksu"
-          MAIN_SUSFS_PATCH_FILENAME="50_add_susfs_in_kernel-${{ inputs.kernel_version_string }}.patch" # Ensure this matches your kernel version string input
+          MAIN_SUSFS_PATCH_FILENAME="50_add_susfs_in_kernel-${{ inputs.kernel_version_string }}.patch"
           MAIN_SUSFS_PATCH_PATH="$SUSFS_SOURCE_DIR/kernel_patches/$MAIN_SUSFS_PATCH_FILENAME"
 
           if [ ! -d "$SUSFS_SOURCE_DIR/kernel_patches" ]; then
             echo "ERROR: $SUSFS_SOURCE_DIR/kernel_patches not found. Cannot apply SUSFS core patches." >&2
-            # exit 1 # Make this fatal if SUSFS is mandatory
             echo "::set-output name=patch_status::skipped_no_source_patches"
-            exit 0 # Exiting non-fatally for now
+            exit 0 
           fi
           echo "Applying SUSFS core patches from $SUSFS_SOURCE_DIR to kernel root..."
           echo "Copying SUSFS fs/* files..."; if [ -d "$SUSFS_SOURCE_DIR/kernel_patches/fs" ]; then cp -rf "$SUSFS_SOURCE_DIR/kernel_patches/fs/"* ./fs/; else echo "Warning: fs dir not found in SUSFS source."; fi
@@ -173,8 +184,8 @@ jobs:
             patch -p1 < "$MAIN_SUSFS_PATCH_PATH" > "$PATCH_LOG_DIR/susfs_core_patch.log" 2>&1
             PATCH_EXIT_CODE=$?
             if [ $PATCH_EXIT_CODE -eq 0 ]; then echo "Main SUSFS patch applied successfully."; echo "::set-output name=patch_status::success";
-            else echo "ERROR: Main SUSFS patch FAILED (Code: $PATCH_EXIT_CODE). Check log." >&2; echo "::set-output name=patch_status::failed"; fi # Consider exit $PATCH_EXIT_CODE
-          else echo "ERROR: Main SUSFS patch file not found: $MAIN_SUSFS_PATCH_PATH" >&2; echo "::set-output name=patch_status::skipped_no_patch_file"; fi # Consider exit 1
+            else echo "ERROR: Main SUSFS patch FAILED (Code: $PATCH_EXIT_CODE). Check log." >&2; echo "::set-output name=patch_status::failed"; fi 
+          else echo "ERROR: Main SUSFS patch file not found: $MAIN_SUSFS_PATCH_PATH" >&2; echo "::set-output name=patch_status::skipped_no_patch_file"; fi 
           
           echo "Verifying SUSFS integration post-patching..."
           if [ -f "./include/linux/susfs.h" ]; then echo "./include/linux/susfs.h FOUND."; else echo "CRITICAL ERROR: ./include/linux/susfs.h NOT FOUND." >&2; fi
