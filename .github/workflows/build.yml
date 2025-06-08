@@ -266,15 +266,15 @@ jobs:
           if [ -f "$DEFCONFIG_PATH" ]; then
             echo "Adding BBR configuration settings to $DEFCONFIG_PATH..."
             cat <<EOF >> $DEFCONFIG_PATH
-CONFIG_TCP_CONG_ADVANCED=y
-CONFIG_TCP_CONG_BBR=y
-CONFIG_DEFAULT_TCP_CONG="bbr"
-CONFIG_TCP_CONG_BIC=n
-CONFIG_TCP_CONG_WESTWOOD=n
-CONFIG_TCP_CONG_HTCP=n
-CONFIG_NET_SCH_FQ=y
-CONFIG_NET_SCH_FQ_CODEL=y
-EOF
+            CONFIG_TCP_CONG_ADVANCED=y
+            CONFIG_TCP_CONG_BBR=y
+            CONFIG_DEFAULT_TCP_CONG="bbr"
+            CONFIG_TCP_CONG_BIC=n
+            CONFIG_TCP_CONG_WESTWOOD=n
+            CONFIG_TCP_CONG_HTCP=n
+            CONFIG_NET_SCH_FQ=y
+            CONFIG_NET_SCH_FQ_CODEL=y
+            EOF
           else
             echo "Warning: $DEFCONFIG_PATH not found in BBR step. Skipping."
           fi
