@@ -431,7 +431,7 @@ jobs:
 
       - name: Build Kernel (using Make)
         env:
-          KBUILD_BUILD_USER: ${{ github.actor }}
+          KBUILD_BUILD_USER: ${{ github.actor }} # Use actual actor name
           KBUILD_BUILD_HOST: "GitHubActions"
         run: |
           echo "Changing to kernel source directory: ${{ env.KERNEL_DIR }}..."
@@ -454,11 +454,31 @@ jobs:
           echo "Applying defconfig: arch/arm64/configs/gki_defconfig with args: $MAKE_ARGS"
           make $MAKE_ARGS gki_defconfig
           
-          echo "Starting kernel build with args: $MAKE_ARGS Image dtbo.img"
-          make $MAKE_ARGS Image dtbo.img
+          # Build Image and dtbs (device tree blobs) separately
+          echo "Starting kernel build with args: $MAKE_ARGS Image"
+          make $MAKE_ARGS Image
+
+          echo "Starting DTBS build with args: $MAKE_ARGS dtbs"
+          make $MAKE_ARGS dtbs # This will create individual .dtb and .dtbo files
 
           echo "Build finished. Checking for artifacts in $KERNEL_BUILD_OUT_DIR..."
-          tree -L 4 "$KERNEL_BUILD_OUT_DIR" || ls -R "$KERNEL_BUILD_OUT_DIR/arch/arm64/boot/"
+          echo "--- Kernel Image Location ---"
+          ls -lh "$KERNEL_BUILD_OUT_DIR/arch/arm64/boot/Image"* 2>/dev/null || echo "Image or Image.gz not found directly in boot."
+          echo "--- DTBS Output Location (Example for QCOM) ---"
+          # The exact path for .dtbo files can vary. Adjust vendor/soc if needed.
+          DTBO_SOURCE_DIR_GUESS="$KERNEL_BUILD_OUT_DIR/arch/arm64/boot/dts/vendor/qcom" # Common for Qualcomm
+          if [ ! -d "$DTBO_SOURCE_DIR_GUESS" ]; then
+             DTBO_SOURCE_DIR_GUESS="$KERNEL_BUILD_OUT_DIR/arch/arm64/boot/dts/${{ inputs.soc }}" # e.g. sm6375
+          fi
+          if [ ! -d "$DTBO_SOURCE_DIR_GUESS" ]; then
+             DTBO_SOURCE_DIR_GUESS="$KERNEL_BUILD_OUT_DIR/arch/arm64/boot/dts/" # More generic
+          fi
+
+          echo "Searching for .dtbo files in $DTBO_SOURCE_DIR_GUESS and subdirectories..."
+          find "$DTBO_SOURCE_DIR_GUESS" -name "*.dtbo" -print || echo "No .dtbo files found in common guessed locations."
+          # Fallback: tree of the entire boot/dts directory
+          tree -L 5 "$KERNEL_BUILD_OUT_DIR/arch/arm64/boot/dts/" || echo "Tree command failed or dts directory not structured as expected."
+
 
           ARTIFACT_STAGING_DIR="$(dirname "$KERNEL_BUILD_OUT_DIR")/out_dist"
           mkdir -p "$ARTIFACT_STAGING_DIR" 
@@ -479,27 +499,76 @@ jobs:
             fi
           fi
 
-          DTBO_PATHS=(
-            "$KERNEL_BUILD_OUT_DIR/arch/arm64/boot/dtbo.img"
-            "$KERNEL_BUILD_OUT_DIR/arch/arm64/boot/dts/${{ inputs.soc }}/dtbo.img"
-            "$KERNEL_BUILD_OUT_DIR/arch/arm64/boot/dts/vendor/qcom/dtbo.img"
-            "$KERNEL_BUILD_OUT_DIR/arch/arm64/boot/dts/qcom/${{ inputs.soc }}.dtbo"
-            "$KERNEL_BUILD_OUT_DIR/dtbo.img"
-          )
-          DTBO_COPIED=false
-          for dtbo_path_try in "${DTBO_PATHS[@]}"; do
-            if [ -f "$dtbo_path_try" ]; then
-              cp "$dtbo_path_try" "$ARTIFACT_STAGING_DIR/dtbo.img"
-              echo "Copied dtbo.img from $dtbo_path_try to $ARTIFACT_STAGING_DIR/dtbo.img"
-              DTBO_COPIED=true
-              break
+          # --- dtbo.img creation (if needed and individual .dtbo files exist) ---
+          # First, ensure mkdtimg tool is available.
+          # For now, let's assume it might be prebuilt or skip if not found.
+          # A proper solution would be to build/install mkdtimg.
+          # The source for mkdtimg is in AOSP: system/libufdt/utils/mkdtimg.c
+          # Android build system usually provides it.
+
+          MKDTIMG_PATH="/usr/bin/mkdtimg" # Ideal if installed system-wide
+          if ! command -v mkdtimg &> /dev/null; then
+             # Try to find a prebuilt one if you add it to your repo, e.g. in a 'tools' directory
+             if [ -f "$GITHUB_WORKSPACE/tools/mkdtimg" ]; then
+                MKDTIMG_PATH="$GITHUB_WORKSPACE/tools/mkdtimg"
+                chmod +x "$MKDTIMG_PATH"
+             else
+                echo "WARNING: mkdtimg command not found. Cannot create dtbo.img from individual .dtbo files."
+                MKDTIMG_PATH="" # Unset to skip dtbo.img creation attempt
+             fi
+          fi
+          
+          DTBO_FILES_FOUND=$(find "$DTBO_SOURCE_DIR_GUESS" -name "*.dtbo" -print)
+          if [ -n "$MKDTIMG_PATH" ] && [ -n "$DTBO_FILES_FOUND" ]; then
+            echo "Found .dtbo files. Attempting to create dtbo.img using $MKDTIMG_PATH..."
+            # Collect all .dtbo files. Be careful with find if paths have spaces.
+            # The arguments to mkdtimg are 'create <output_image> <dtbo_file1> <dtbo_file2> ...'
+            # Or use --dt_table_config for a config file. Simpler is direct listing.
+            # This find command collects all found .dtbo files into arguments for mkdtimg.
+            # It assumes the .dtbo files are directly in the DTBO_SOURCE_DIR_GUESS or one level deep.
+            # You might need to adjust the find command if your .dtbo files are scattered more widely
+            # or if you only need a specific subset.
+            # Example: find "$DTBO_SOURCE_DIR_GUESS" -path "*${{ inputs.soc }}*.dtbo" -print
+            
+            # Create a space-separated list of .dtbo files.
+            # This is a bit fragile if filenames have spaces, but common for .dtbo files.
+            DTBO_ARGS=$(find "$DTBO_SOURCE_DIR_GUESS" -name "*.dtbo" -print | tr '\n' ' ')
+
+            if [ -n "$DTBO_ARGS" ]; then
+                "$MKDTIMG_PATH" create "$ARTIFACT_STAGING_DIR/dtbo.img" $DTBO_ARGS
+                if [ -f "$ARTIFACT_STAGING_DIR/dtbo.img" ]; then
+                    echo "Successfully created $ARTIFACT_STAGING_DIR/dtbo.img"
+                else
+                    echo "ERROR: Failed to create dtbo.img using mkdtimg."
+                fi
+            else
+                echo "WARNING: No .dtbo files found by find command for mkdtimg arguments."
             fi
-          done
-          if [ "$DTBO_COPIED" = false ]; then
-            echo "WARNING: dtbo.img not found. Searched paths:"
-            printf '%s\n' "${DTBO_PATHS[@]}"
+          elif [ -n "$DTBO_FILES_FOUND" ]; then
+            echo "WARNING: .dtbo files were found, but mkdtimg tool is not available. dtbo.img will not be created."
+            echo "Consider adding mkdtimg to your PATH or to $GITHUB_WORKSPACE/tools/"
+          else
+            echo "INFO: No .dtbo files found or mkdtimg not available. Skipping dtbo.img creation."
+          fi
+          
+          # Fallback: Check if a pre-existing dtbo.img was somehow created by 'make dtbs' (unlikely but possible for some kernels)
+          if [ ! -f "$ARTIFACT_STAGING_DIR/dtbo.img" ]; then
+            DTBO_PATHS_AFTER_DTBS=(
+              "$KERNEL_BUILD_OUT_DIR/arch/arm64/boot/dtbo.img" 
+              "$KERNEL_BUILD_OUT_DIR/dtbo.img" 
+            )
+            for dtbo_path_try in "${DTBO_PATHS_AFTER_DTBS[@]}"; do
+              if [ -f "$dtbo_path_try" ]; then
+                cp "$dtbo_path_try" "$ARTIFACT_STAGING_DIR/dtbo.img"
+                echo "Copied pre-existing dtbo.img from $dtbo_path_try to $ARTIFACT_STAGING_DIR/dtbo.img (after make dtbs)"
+                break
+              fi
+            done
           fi
 
+          if [ ! -f "$ARTIFACT_STAGING_DIR/dtbo.img" ]; then
+            echo "FINAL WARNING: dtbo.img was not found or created in $ARTIFACT_STAGING_DIR."
+          fi
       - name: Copy Images to AnyKernel3
         run: |
           ARTIFACT_SOURCE_DIR="$GITHUB_WORKSPACE/${{ env.CONFIG_VAR_NAME }}/out_dist"
