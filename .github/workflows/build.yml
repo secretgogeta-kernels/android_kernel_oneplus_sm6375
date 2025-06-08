@@ -296,7 +296,8 @@ EOF
           fi
 
       - name: Run sed and perl Commands
-        shell: bash # CORRECTED LINE
+        # This is line 239 in the context of the error message
+        shell: bash 
         run: |
           set -e 
           echo "Changing to kernel source directory: ${{ env.KERNEL_DIR }}..."
