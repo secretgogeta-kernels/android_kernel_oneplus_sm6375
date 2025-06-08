@@ -381,28 +381,53 @@ jobs:
           done
           echo "Sed/Perl script finished."
 
-      - name: Setup Clang Toolchain (AOSP Prebuilt)
+      - name: Setup Clang Toolchain (LineageOS Kernel Specific r416183b)
         run: |
-          echo "Setting up Clang toolchain..."
-          CLANG_VERSION="r450784e" # IMPORTANT: Choose a Clang version compatible with your kernel_version
-          CLANG_DIR="$GITHUB_WORKSPACE/clang-host-linux-x86-clang-${CLANG_VERSION}"
+          echo "Setting up Clang toolchain: LineageOS Kernel Specific r416183b..."
+          # Define the specific Clang version/directory name based on the repo
+          CLANG_REPO_URL="https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git"
+          CLANG_DIR="$GITHUB_WORKSPACE/clang-r416183b" # Directory to clone into
+
           if [ ! -d "$CLANG_DIR/bin" ]; then
-            echo "Clang version $CLANG_VERSION not found locally, cloning..."
-            git clone https://github.com/LineageOS/android_prebuilts_clang_host_linux-x86.git "$CLANG_DIR" --depth=1 -b "lineage-19.1-clang-${CLANG_VERSION}" || \
-            git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 "$CLANG_DIR" --depth=1 -b "clang-${CLANG_VERSION}"
+            echo "Clang r416183b not found locally, cloning from $CLANG_REPO_URL..."
+            # Clone the entire repository, as it's version-specific. No specific branch needed usually.
+            git clone "$CLANG_REPO_URL" "$CLANG_DIR" --depth=1
           else
             echo "Clang directory $CLANG_DIR/bin already exists."
           fi
-          if [ ! -d "$CLANG_DIR/bin" ]; then echo "ERROR: Failed to clone or find Clang toolchain at $CLANG_DIR"; exit 1; fi
+          
+          if [ ! -d "$CLANG_DIR/bin" ]; then
+            echo "ERROR: Failed to clone or find Clang toolchain at $CLANG_DIR after attempting to clone $CLANG_REPO_URL"
+            # Attempt a more generic Clang as a last resort (less ideal but better than nothing for some kernels)
+            echo "Attempting fallback to a generic AOSP Clang (e.g., r450784e or similar)..."
+            FALLBACK_CLANG_VERSION="r450784e" # Or another known stable AOSP Clang
+            FALLBACK_CLANG_DIR="$GITHUB_WORKSPACE/clang-host-linux-x86-clang-${FALLBACK_CLANG_VERSION}"
+            if [ ! -d "$FALLBACK_CLANG_DIR/bin" ]; then
+                git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 "$FALLBACK_CLANG_DIR" --depth=1 -b "clang-${FALLBACK_CLANG_VERSION}" || true # Allow failure
+            fi
+            if [ -d "$FALLBACK_CLANG_DIR/bin" ]; then
+                echo "Using fallback Clang: $FALLBACK_CLANG_DIR/bin"
+                CLANG_DIR="$FALLBACK_CLANG_DIR" # Switch to fallback
+            else
+                echo "ERROR: Fallback Clang also failed to be set up."
+                exit 1
+            fi
+          fi
           
           echo "$CLANG_DIR/bin" >> $GITHUB_PATH
           echo "LLVM=1" >> $GITHUB_ENV
           echo "LLVM_IAS=1" >> $GITHUB_ENV
           echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
-          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV 
-          echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> $GITHUB_ENV
+          # For these kernel-specific Clang prebuilts, CROSS_COMPILE often points to its own binutils
+          echo "CROSS_COMPILE=$CLANG_DIR/bin/aarch64-linux-gnu-" >> $GITHUB_ENV 
+          echo "CROSS_COMPILE_ARM32=$CLANG_DIR/bin/arm-linux-gnueabi-" >> $GITHUB_ENV
           echo "Clang Path set to: $CLANG_DIR/bin"
-          clang --version || echo "clang command not found or failed after setup!"
+          
+          echo "Verifying Clang version..."
+          ${CLANG_DIR}/bin/clang --version || echo "clang command not found or failed after setup!"
+          
+          echo "Listing $CLANG_DIR/bin to check for cross compilers:"
+          ls -l "$CLANG_DIR/bin"
 
       - name: Build Kernel (using Make)
         env:
