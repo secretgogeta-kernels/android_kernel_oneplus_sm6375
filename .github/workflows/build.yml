@@ -1,79 +1,64 @@
-name: Build
+name: Build OnePlus SM6375 Kernel (Sequential Steps Text Names)
 permissions:
-  contents: write  # Allow writing to repository contents (for pushing tags)
-  actions: write   # Allows triggering actions
+  contents: write
+  actions: write
 
 on:
   workflow_call:
     inputs:
-      model:
-        required: true
-        type: string
-      soc:
-        required: true
-        type: string
-      branch:
-        required: true
-        type: string
-      android_version:
-        required: true
-        type: string
-      kernel_version:
-        required: true
-        type: string
-      ksun_branch:
-        required: true
-        type: string
-        default: stable
-
+      model: {required: true, type: string}
+      soc: {required: true, type: string}
+      kernel_source_branch: {required: true, type: string}
+      android_version_name: {required: true, type: string}
+      kernel_version_string: {required: true, type: string}
   workflow_dispatch:
     inputs:
       model:
-        description: 'Device model codename (e.g., larry, OPAce5Pro)'
+        description: 'Device model codename (e.g., larry)'
         required: true
         type: string
         default: 'larry'
       soc:
-        description: 'SoC codename (e.g., sm6375, sun)'
+        description: 'SoC codename (e.g., sm6375)'
         required: true
         type: string
         default: 'sm6375'
-      branch:
-        description: 'Kernel source branch (e.g., thirteen, fourteen-ksu)'
+      kernel_source_branch:
+        description: 'Kernel source branch for Teamhackneyed/android_kernel_oneplus_sm6375'
         required: true
         type: string
-      android_version:
-        description: 'Android version (e.g., 13, 14)'
+        default: 'thirteen'
+      android_version_name:
+        description: 'Android version name (e.g., 13, 14)'
         required: true
         type: string
-      kernel_version:
-        description: 'Kernel version (e.g., 5.10, 5.15)' # SM6375 is often 5.10
+        default: '13'
+      kernel_version_string:
+        description: 'Kernel version string (e.g., 5.4, 5.10)'
         required: true
         type: string
-      ksun_branch:
-        description: 'KernelSU branch (e.g., stable, next)'
-        required: true
-        type: string
-        default: stable
+        default: '5.10'
 
 jobs:
-  build-kernel-oneplus-kernelsu-susfs:
+  build_kernel_sequential_text_names: # Updated job name
     runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      MODEL_CODENAME: ${{ inputs.model }}
+      KERNEL_SOURCE_REPO_URL: "https://github.com/Teamhackneyed/android_kernel_oneplus_sm6375.git"
+      KERNEL_SOURCE_BRANCH: ${{ inputs.kernel_source_branch }}
+      KERNEL_SOURCE_PARENT_DIR: "${{ github.workspace }}/${{ inputs.model }}"
+      KERNEL_DIR: "${{ github.workspace }}/${{ inputs.model }}/android_kernel_oneplus_sm6375"
+      DEBIAN_FRONTEND: noninteractive
 
     steps:
-      - name: Setup System
+      - name: Setup System Environment and Dependencies
         run: |
-          export DEBIAN_FRONTEND=noninteractive
           echo "DEBIAN_FRONTEND=noninteractive" >> $GITHUB_ENV
-          
           df -h
-          
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/share/swift || true
           sudo docker image prune --all --force
-          echo "some directories deleted"
-          
-          sudo apt-get update
-          # Remove large unwanted packages first
+          sudo apt-get update -qq
           sudo apt-get purge -y \
             aria2 ansible azure-cli shellcheck rpm xorriso zsync \
             esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable \
@@ -83,533 +68,253 @@ jobs:
             unixodbc-dev yarn chrpath libssl-dev libxft-dev \
             libfreetype6 libfreetype6-dev libfontconfig1 libfontconfig1-dev \
             snmp pollinate libpq-dev postgresql-client powershell ruby-full \
-            sphinxsearch subversion mongodb-org microsoft-edge-stable || true
-          
-          sudo apt-get purge -y $(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet') || true
-          
-          sudo apt-get autoremove -y
-          sudo apt-get autoclean -y
-          echo "some packages purged"
-
-          # Install essential build dependencies
-          sudo apt-get install -y \
-            git curl ccache python3 python-is-python3 tree \
+            sphinxsearch subversion mongodb-org microsoft-edge-stable > /dev/null 2>&1 || true
+          sudo apt-get purge -y $(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet') > /dev/null 2>&1 || true
+          sudo apt-get autoremove -y > /dev/null 2>&1
+          sudo apt-get autoclean -y > /dev/null 2>&1
+          sudo apt-get install -y --no-install-recommends \
+            git curl python3 python-is-python3 tree \
             build-essential bc libssl-dev libelf-dev \
             bison flex rsync libncurses-dev \
-            zip unzip tar gzip bzip2 lzop
-          echo "Essential build dependencies installed."
+            zip unzip tar gzip bzip2 lzop patch > /dev/null 2>&1
+          echo "System setup complete."
           df -h
 
-      - name: Install Repo
+      - name: Install Repo Tool
         run: |
-          mkdir -p ./git-repo
-          curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ./git-repo/repo
-          chmod a+rx ./git-repo/repo
-          echo "REPO=$GITHUB_WORKSPACE/./git-repo/repo" >> $GITHUB_ENV
+          mkdir -p ${{ github.workspace }}/git-repo-tool
+          curl -sSL https://storage.googleapis.com/git-repo-downloads/repo > ${{ github.workspace }}/git-repo-tool/repo
+          chmod a+rx ${{ github.workspace }}/git-repo-tool/repo
+          echo "${{ github.workspace }}/git-repo-tool" >> $GITHUB_PATH
 
-      - name: Set CONFIG_VAR_NAME Environment Variable
+      - name: Set Environment Variables for Paths
         run: |
-          CONFIG_VAR_NAME="${{ inputs.model }}"
-          echo "CONFIG_VAR_NAME=$CONFIG_VAR_NAME" >> $GITHUB_ENV
-          echo "CONFIG_VAR_NAME (model) set to: $CONFIG_VAR_NAME"
+          echo "MODEL_CODENAME (from job env) is: ${{ env.MODEL_CODENAME }}"
+          echo "KERNEL_DIR (from job env) is: ${{ env.KERNEL_DIR }}"
 
-      - name: Clone AnyKernel3 and Other Dependencies
+      - name: Clone AnyKernel3 and Other Patch Dependencies
         run: |
-          echo "Cloning AnyKernel3 and other dependencies into $GITHUB_WORKSPACE..."
-          ANYKERNEL_BRANCH="gki" 
-          SUSFS_BRANCH="kernel-5.4"
-          
-          echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
-          echo "Using branch for SUSFS: $SUSFS_BRANCH"
-          
-          git clone https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH" AnyKernel3
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH" susfs4ksu
-          git clone https://github.com/TheWildJames/kernel_patches.git kernel_patches
-          echo "Listing $GITHUB_WORKSPACE after cloning dependencies:"
-          ls -alh "$GITHUB_WORKSPACE"
+          echo "Cloning dependencies into $GITHUB_WORKSPACE..."
+          ANYKERNEL_BRANCH="gki"
+          git clone https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH" ${{ github.workspace }}/AnyKernel3
+          git clone https://github.com/TheWildJames/kernel_patches.git ${{ github.workspace }}/kernel_patches
+          ls -alh ${{ github.workspace }}
 
       - name: Clone Kernel Source
         run: |
-          KERNEL_SOURCE_DIR_NAME="android_kernel_oneplus_sm6375"
-          KERNEL_PARENT_DIR="$GITHUB_WORKSPACE/${{ env.CONFIG_VAR_NAME }}"
+          echo "Creating kernel parent directory: ${{ env.KERNEL_SOURCE_PARENT_DIR }}"
+          mkdir -p "${{ env.KERNEL_SOURCE_PARENT_DIR }}"
+          cd "${{ env.KERNEL_SOURCE_PARENT_DIR }}"
+          echo "Cloning kernel into $(basename ${{ env.KERNEL_DIR }})..."
+          git clone "${{ env.KERNEL_SOURCE_REPO_URL }}" -b "${{ env.KERNEL_SOURCE_BRANCH }}" "$(basename ${{ env.KERNEL_DIR }})" --depth=1
+          if [ ! -d "${{ env.KERNEL_DIR }}" ]; then echo "ERROR: Kernel directory ${{ env.KERNEL_DIR }} not found." >&2; exit 1; fi
+          echo "Kernel source cloned to ${{ env.KERNEL_DIR }}"
 
-          echo "Creating folder for kernel source: $KERNEL_PARENT_DIR/$KERNEL_SOURCE_DIR_NAME..."
-          mkdir -p "$KERNEL_PARENT_DIR"
-          cd "$KERNEL_PARENT_DIR"
-          
-          echo "Cloning kernel source for SM6375 into $(pwd)/$KERNEL_SOURCE_DIR_NAME..."
-          git clone https://github.com/Teamhackneyed/android_kernel_oneplus_sm6375.git -b "${{ inputs.branch }}" "$KERNEL_SOURCE_DIR_NAME" --depth=1
-          
-          echo "KERNEL_DIR=$KERNEL_PARENT_DIR/$KERNEL_SOURCE_DIR_NAME" >> $GITHUB_ENV
-          echo "Kernel source cloned into $KERNEL_PARENT_DIR/$KERNEL_SOURCE_DIR_NAME"
-
-      - name: List Kernel Source Contents
+      - name: List Initial Kernel Source Contents
         run: |
-          echo "Listing contents of ${{ env.KERNEL_DIR }}..."
           cd "${{ env.KERNEL_DIR }}"
-          
-          echo "--- Top Level Contents ---"
+          echo "Contents of ${{ env.KERNEL_DIR }}:"
           ls -alh
-          echo "--- Contents of ./oplus/ ---"
-          if [ -d "./oplus" ]; then ls -alh ./oplus; else echo "./oplus directory not found."; fi
-          echo "--- Contents of ./oplus/build/ ---"
-          if [ -d "./oplus/build" ]; then ls -alh ./oplus/build; else echo "./oplus/build directory not found."; fi
-          echo "--- Looking for build_with_bazel.py ---"
-          if [ -f "./build_with_bazel.py" ]; then echo "Found: ./build_with_bazel.py"; else echo "./build_with_bazel.py not found."; fi
-          echo "--- Checking for defconfig: arch/arm64/configs/gki_defconfig ---"
-          if [ -f "./arch/arm64/configs/gki_defconfig" ]; then echo "Found: ./arch/arm64/configs/gki_defconfig"; else echo "./arch/arm64/configs/gki_defconfig not found."; fi
+          echo "Checking for gki_defconfig..."
+          if [ -f "./arch/arm64/configs/gki_defconfig" ]; then echo "Found: ./arch/arm64/configs/gki_defconfig"; else echo "NOT FOUND: ./arch/arm64/configs/gki_defconfig"; fi
 
-      - name: Add KernelSU Next
+      - name: Add KernelSU Next (Two-Stage with rifsxd for SUSFS)
         run: |
-          echo "Changing to kernel source directory: ${{ env.KERNEL_DIR }}..."
           cd "${{ env.KERNEL_DIR }}"
-          
-          echo "Adding KernelSU Next (branch: ${{ inputs.ksun_branch }})..."
-          if [ "${{ inputs.ksun_branch }}" == "stable" ]; then
-            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
+          echo "Stage 1: Adding base KernelSU-Next (official next)..."
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
+
+          echo "Stage 2: Integrating/Updating SUSFS components using rifsxd/KernelSU-Next/next-susfs setup..."
+          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s next-susfs
+
+          echo "Running git submodule update --init --recursive..."
+          ( test -d .git || git init -b temp_ksu_fix ) && git submodule update --init --recursive && (git rev-parse --abbrev-ref HEAD 2>/dev/null | grep -q temp_ksu_fix && git branch -D temp_ksu_fix || true)
+
+          if [ -d "./KernelSU-Next/kernel" ]; then
+            echo "KernelSU-Next/kernel directory found."
+            (cd KernelSU-Next && echo "KSU-Next Described: $(git describe --tags --always)")
+            if [ -f "./KernelSU-Next/kernel/Makefile" ] && grep -q "DKSU_VERSION=" "./KernelSU-Next/kernel/Makefile"; then
+              KSUVER_FROM_MAKEFILE=$(grep "DKSU_VERSION=" "./KernelSU-Next/kernel/Makefile" | cut -d'=' -f2 | tr -d '[:space:]')
+              if [[ "$KSUVER_FROM_MAKEFILE" =~ ^[0-9]+$ ]]; then
+                echo "KSUVER extracted for zip naming: $KSUVER_FROM_MAKEFILE"
+                echo "KSUVER=$KSUVER_FROM_MAKEFILE" >> $GITHUB_ENV
+              fi
+            fi
           else
-            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s ${{ inputs.ksun_branch }}
+            echo "ERROR: KernelSU-Next/kernel directory NOT found." >&2; exit 1;
           fi
-          git submodule update --init --recursive
+          echo "Searching for INODE_STATE_SUS_KSTAT definition after KSU setups..."
+          if grep -qE -R "INODE_STATE_SUS_KSTAT|SUS_KSTAT_BIT" ./include ./drivers/kernelsu ./KernelSU-Next; then
+             echo "SUSFS KSTAT definition seems present."
+          else
+             echo "WARNING: SUSFS KSTAT definition still NOT found. Build might fail."
+          fi
+      
+      # At this point, SUSFS core patches (like 50_add_susfs...) are assumed to be handled by rifsxd's script.
+      # If not, a dedicated step to apply such a patch to KERNEL_DIR root would be needed here.
 
-      - name: Apply SUSFS Patches
+      - name: Apply KSUN Hooks Patch
+        id: ksun_hooks_patch_step
         run: |
-          echo "Changing to kernel source directory: ${{ env.KERNEL_DIR }}..."
           cd "${{ env.KERNEL_DIR }}"
-          
-          echo "Applying SUSFS patches for kernel version ${{ inputs.kernel_version }}..."
-          if [ ! -f "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-${{ inputs.kernel_version }}.patch" ]; then
-            echo "ERROR: SUSFS patch file 50_add_susfs_in_kernel-${{ inputs.kernel_version }}.patch not found in $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/"
-            exit 1
-          fi
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-${{ inputs.kernel_version }}.patch" ./ 
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs/"* ./fs/ 
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/"* ./include/linux/
-          
-          cd ./KernelSU-Next
-          if [ "${{ inputs.ksun_branch }}" == "stable" ] || [ "${{ inputs.ksun_branch }}" == "next" ]; then
-            echo "Applying next SUSFS patches to KernelSU-Next..."
-            cp "$GITHUB_WORKSPACE/kernel_patches/next/0001-kernel-patch-susfs-v1.5.7-to-KernelSU-Next-v1.0.7.patch" ./ksun_susfs_latest.patch
-            patch -p1 --forward < ksun_susfs_latest.patch || true
-          fi
-          
-          case "${{ inputs.ksun_branch }}" in
-            next|stable) BASE_VERSION=10200 ;;
-            next-susfs|next-susfs-dev) BASE_VERSION=10198 ;;
-            *) BASE_VERSION=10200 ;;
-          esac
-          
-          cd ./kernel
-          KSU_VERSION=$(expr $(git rev-list --count HEAD) "+" $BASE_VERSION)
-          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-          sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
-          
-          cd ../../ 
-          patch -p1 < ./50_add_susfs_in_kernel-${{ inputs.kernel_version }}.patch || true
-
-      - name: Apply KSUN Hooks
-        run: |
-          echo "Changing to kernel source directory: ${{ env.KERNEL_DIR }}..."
-          cd "${{ env.KERNEL_DIR }}" 
+          PATCH_LOG_DIR="$GITHUB_WORKSPACE/patch_logs"
+          mkdir -p "$PATCH_LOG_DIR"
           echo "Applying KSUN Hooks..."
-          cp "$GITHUB_WORKSPACE/kernel_patches/next/syscall_hooks.patch" ./
-          patch -p1 --fuzz=3 < ./syscall_hooks.patch || true
-          
-      - name: Apply Hide Stuff Patches
+          if [ -f "$GITHUB_WORKSPACE/kernel_patches/next/syscall_hooks.patch" ]; then
+            cp "$GITHUB_WORKSPACE/kernel_patches/next/syscall_hooks.patch" ./
+            patch -p1 --fuzz=3 < ./syscall_hooks.patch > "$PATCH_LOG_DIR/ksun_hooks_patch.log" 2>&1 || echo "KSUN Hooks patch had issues, check log."
+          else
+            echo "KSUN Hooks patch not found, skipping."
+          fi
+          echo "patch_log_dir_path=$PATCH_LOG_DIR" >> $GITHUB_OUTPUT # Output for later artifact upload
+
+      - name: Apply Hide Stuff Patch
+        id: hide_stuff_patch_step # Give ID if its output is needed
         run: |
-          echo "Changing to kernel source directory: ${{ env.KERNEL_DIR }}..."
           cd "${{ env.KERNEL_DIR }}"
-          cp "$GITHUB_WORKSPACE/kernel_patches/69_hide_stuff.patch" .
-          patch -p1 -F 3 < 69_hide_stuff.patch || true
-          
-      - name: Add KernelSU-Next and SUSFS Configuration Settings
-        run: |
-          echo "Changing to kernel source directory: ${{ env.KERNEL_DIR }}..."
-          cd "${{ env.KERNEL_DIR }}"
-          DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"
-          echo "Adding configuration settings to $DEFCONFIG_PATH..."
-          
-          if [ ! -f "$DEFCONFIG_PATH" ]; then
-            echo "Warning: $DEFCONFIG_PATH not found. Attempting to create it."
-            mkdir -p "$(dirname "$DEFCONFIG_PATH")"
-            touch "$DEFCONFIG_PATH"
+          PATCH_LOG_DIR="$GITHUB_WORKSPACE/patch_logs" 
+          mkdir -p "$PATCH_LOG_DIR" # Ensure exists
+          echo "Applying Hide Stuff Patches..."
+          if [ -f "$GITHUB_WORKSPACE/kernel_patches/69_hide_stuff.patch" ]; then
+            cp "$GITHUB_WORKSPACE/kernel_patches/69_hide_stuff.patch" .
+            patch -p1 -F 3 < 69_hide_stuff.patch > "$PATCH_LOG_DIR/hide_stuff_patch.log" 2>&1 || echo "Hide Stuff patch had issues, check log."
+          else
+            echo "Hide Stuff patch not found, skipping."
           fi
 
-          cat <<EOF >> $DEFCONFIG_PATH
-          CONFIG_KSU=y
-          CONFIG_KSU_KPROBES_HOOK=n
-          CONFIG_KSU_SUSFS=y
-          CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
-          CONFIG_KSU_SUSFS_SUS_PATH=y
-          CONFIG_KSU_SUSFS_SUS_MOUNT=y
-          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
-          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
-          CONFIG_KSU_SUSFS_SUS_KSTAT=y
-          CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n
-          CONFIG_KSU_SUSFS_TRY_UMOUNT=y
-          CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
-          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
-          CONFIG_KSU_SUSFS_ENABLE_LOG=y
-          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
-          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-          CONFIG_KSU_SUSFS_SUS_SU=n
-          CONFIG_TMPFS_XATTR=y
-          CONFIG_TMPFS_POSIX_ACL=y
-          EOF
-
-      - name: Add BBR Support (Optional TCP Congestion Control)
-        # Using shell: bash for consistency with other multiline scripts
+      - name: Add KernelSU and SUSFS Settings to Defconfig
         shell: bash
         run: |
           set -e
-          echo "Changing to kernel source directory: ${{ env.KERNEL_DIR }}..."
           cd "${{ env.KERNEL_DIR }}"
           DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"
-          
-          # Ensure defconfig path exists before appending
-          if [ ! -f "$DEFCONFIG_PATH" ]; then
-            echo "Warning: $DEFCONFIG_PATH not found in BBR step. Skipping BBR config."
-          else
-            echo "Adding BBR configuration settings to $DEFCONFIG_PATH..."
-            # Check if options already exist to avoid duplicates (optional, but good practice)
-            grep -qxF "CONFIG_TCP_CONG_ADVANCED=y" "$DEFCONFIG_PATH" || echo "CONFIG_TCP_CONG_ADVANCED=y" >> "$DEFCONFIG_PATH"
-            grep -qxF "CONFIG_TCP_CONG_BBR=y" "$DEFCONFIG_PATH" || echo "CONFIG_TCP_CONG_BBR=y" >> "$DEFCONFIG_PATH"
-            
-            # For default, remove old default if it exists, then add new one
-            sed -i '/CONFIG_DEFAULT_TCP_CONG=/d' "$DEFCONFIG_PATH"
-            echo "CONFIG_DEFAULT_TCP_CONG=\"bbr\"" >> "$DEFCONFIG_PATH"
-            
-            # Disable others (if they exist as =y, change to =n, otherwise add as =n)
-            if grep -q "CONFIG_TCP_CONG_BIC=y" "$DEFCONFIG_PATH"; then
-              sed -i 's/CONFIG_TCP_CONG_BIC=y/CONFIG_TCP_CONG_BIC=n/' "$DEFCONFIG_PATH"
-            elif ! grep -q "CONFIG_TCP_CONG_BIC=" "$DEFCONFIG_PATH"; then
-              echo "CONFIG_TCP_CONG_BIC=n" >> "$DEFCONFIG_PATH"
-            fi
-            
-            if grep -q "CONFIG_TCP_CONG_WESTWOOD=y" "$DEFCONFIG_PATH"; then
-              sed -i 's/CONFIG_TCP_CONG_WESTWOOD=y/CONFIG_TCP_CONG_WESTWOOD=n/' "$DEFCONFIG_PATH"
-            elif ! grep -q "CONFIG_TCP_CONG_WESTWOOD=" "$DEFCONFIG_PATH"; then
-              echo "CONFIG_TCP_CONG_WESTWOOD=n" >> "$DEFCONFIG_PATH"
-            fi
+          echo "Adding KSU/SUSFS settings to $DEFCONFIG_PATH..."
+          if [ ! -f "$DEFCONFIG_PATH" ]; then mkdir -p "$(dirname "$DEFCONFIG_PATH")" && touch "$DEFCONFIG_PATH"; fi
+          add_config() { grep -qxF "$1" "$DEFCONFIG_PATH" || echo "$1" >> "$DEFCONFIG_PATH"; }
+          add_config "CONFIG_KSU=y"; add_config "CONFIG_KSU_KPROBES_HOOK=n"; add_config "CONFIG_KSU_SUSFS=y"
+          add_config "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y"; add_config "CONFIG_KSU_SUSFS_SUS_PATH=y"
+          add_config "CONFIG_KSU_SUSFS_SUS_MOUNT=y"; add_config "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y"
+          add_config "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y"; add_config "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+          add_config "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n"; add_config "CONFIG_KSU_SUSFS_TRY_UMOUNT=y"
+          add_config "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y"; add_config "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+          add_config "CONFIG_KSU_SUSFS_ENABLE_LOG=y"; add_config "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
+          add_config "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"; add_config "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+          add_config "CONFIG_KSU_SUSFS_SUS_SU=n"; add_config "CONFIG_TMPFS_XATTR=y"; add_config "CONFIG_TMPFS_POSIX_ACL=y"
 
-            if grep -q "CONFIG_TCP_CONG_HTCP=y" "$DEFCONFIG_PATH"; then
-              sed -i 's/CONFIG_TCP_CONG_HTCP=y/CONFIG_TCP_CONG_HTCP=n/' "$DEFCONFIG_PATH"
-            elif ! grep -q "CONFIG_TCP_CONG_HTCP=" "$DEFCONFIG_PATH"; then
-              echo "CONFIG_TCP_CONG_HTCP=n" >> "$DEFCONFIG_PATH"
-            fi
-            
-            grep -qxF "CONFIG_NET_SCH_FQ=y" "$DEFCONFIG_PATH" || echo "CONFIG_NET_SCH_FQ=y" >> "$DEFCONFIG_PATH"
-            grep -qxF "CONFIG_NET_SCH_FQ_CODEL=y" "$DEFCONFIG_PATH" || echo "CONFIG_NET_SCH_FQ_CODEL=y" >> "$DEFCONFIG_PATH"
-            echo "BBR settings applied to $DEFCONFIG_PATH."
-          fi
-          
-      - name: Add TTL Target Support (Optional Netfilter Feature)
-        shell: bash # Use bash for consistency
+      - name: Add BBR Support Settings to Defconfig
+        shell: bash
         run: |
-          set -e # Good practice to include
-          echo "Changing to kernel source directory: ${{ env.KERNEL_DIR }}..."
+          set -e
           cd "${{ env.KERNEL_DIR }}"
           DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"
-          
-          if [ ! -f "$DEFCONFIG_PATH" ]; then
-            echo "Warning: $DEFCONFIG_PATH not found in TTL step. Skipping TTL config."
-          else
-            echo "Adding TTL target configuration settings to $DEFCONFIG_PATH..."
-            # Use grep to add only if not already present, prevents duplicates
-            grep -qxF "CONFIG_IP_NF_TARGET_TTL=y" "$DEFCONFIG_PATH" || echo "CONFIG_IP_NF_TARGET_TTL=y" >> "$DEFCONFIG_PATH"
-            grep -qxF "CONFIG_IP6_NF_TARGET_HL=y" "$DEFCONFIG_PATH" || echo "CONFIG_IP6_NF_TARGET_HL=y" >> "$DEFCONFIG_PATH"
-            grep -qxF "CONFIG_IP6_NF_MATCH_HL=y" "$DEFCONFIG_PATH" || echo "CONFIG_IP6_NF_MATCH_HL=y" >> "$DEFCONFIG_PATH"
-            echo "TTL Target settings applied to $DEFCONFIG_PATH."
-          fi
+          echo "Adding BBR settings to $DEFCONFIG_PATH..."
+          if [ ! -f "$DEFCONFIG_PATH" ]; then echo "Warning: $DEFCONFIG_PATH not found." >&2; exit 0; fi
+          add_config() { grep -qxF "$1" "$DEFCONFIG_PATH" || echo "$1" >> "$DEFCONFIG_PATH"; }
+          set_config() { if grep -q "^$1=" "$DEFCONFIG_PATH"; then sed -i "s|^$1=.*|$1=$2|" "$DEFCONFIG_PATH"; else echo "$1=$2" >> "$DEFCONFIG_PATH"; fi; }
+          add_config "CONFIG_TCP_CONG_ADVANCED=y"; add_config "CONFIG_TCP_CONG_BBR=y"
+          set_config "CONFIG_DEFAULT_TCP_CONG" "\"bbr\""; set_config "CONFIG_TCP_CONG_BIC" "n"
+          set_config "CONFIG_TCP_CONG_WESTWOOD" "n"; set_config "CONFIG_TCP_CONG_HTCP" "n"
+          add_config "CONFIG_NET_SCH_FQ=y"; add_config "CONFIG_NET_SCH_FQ_CODEL=y"
 
-      - name: Run sed and perl Commands
-        # This is line 239 in the context of the error message
-        shell: bash 
+      - name: Add TTL Target Settings to Defconfig
+        shell: bash
+        run: |
+          set -e
+          cd "${{ env.KERNEL_DIR }}"
+          DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"
+          echo "Adding TTL settings to $DEFCONFIG_PATH..."
+          if [ ! -f "$DEFCONFIG_PATH" ]; then echo "Warning: $DEFCONFIG_PATH not found." >&2; exit 0; fi
+          add_config() { grep -qxF "$1" "$DEFCONFIG_PATH" || echo "$1" >> "$DEFCONFIG_PATH"; }
+          add_config "CONFIG_IP_NF_TARGET_TTL=y"; add_config "CONFIG_IP6_NF_TARGET_HL=y"; add_config "CONFIG_IP6_NF_MATCH_HL=y"
+
+      - name: Apply LTO, Versioning, and Other Final Tweaks
+        shell: bash
         run: |
           set -e 
-          echo "Changing to kernel source directory: ${{ env.KERNEL_DIR }}..."
           cd "${{ env.KERNEL_DIR }}"
-
           DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"
-          echo "Running sed commands on $DEFCONFIG_PATH and scripts..."
-
+          echo "Applying LTO settings to $DEFCONFIG_PATH and versioning tweaks..."
           if [ -f "$DEFCONFIG_PATH" ]; then
-            sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG_PATH"
-            sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG_PATH"
-            sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG_PATH"
+            add_config_fn() { grep -qxF "$1" "$DEFCONFIG_PATH" || echo "$1" >> "$DEFCONFIG_PATH"; } # Local function for this script block
+            if grep -q "CONFIG_LTO=n" "$DEFCONFIG_PATH"; then sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG_PATH"; elif ! grep -q "CONFIG_LTO=y" "$DEFCONFIG_PATH"; then add_config_fn "CONFIG_LTO=y"; fi
+            if grep -q "CONFIG_LTO=y" "$DEFCONFIG_PATH"; then 
+              if grep -q "CONFIG_LTO_CLANG_FULL=y" "$DEFCONFIG_PATH"; then sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG_PATH"; 
+              elif grep -q "CONFIG_LTO_CLANG_NONE=y" "$DEFCONFIG_PATH"; then sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG_PATH"; 
+              elif ! grep -q "CONFIG_LTO_CLANG_THIN=y" "$DEFCONFIG_PATH"; then add_config_fn "CONFIG_LTO_CLANG_THIN=y"; fi
+              if grep -q "CONFIG_LTO_CLANG_THIN=y" "$DEFCONFIG_PATH"; then sed -i '/CONFIG_LTO_CLANG_FULL=y/d' "$DEFCONFIG_PATH"; sed -i '/CONFIG_LTO_CLANG_NONE=y/d' "$DEFCONFIG_PATH"; fi
+            fi
           else
-            echo "Warning: $DEFCONFIG_PATH not found for LTO sed, skipping."
+            echo "Warning: $DEFCONFIG_PATH not found for LTO tweaks."
           fi
-
-          BUILD_CONFIG_GKI_PATH="./build.config.gki"
-          if [ -f "$BUILD_CONFIG_GKI_PATH" ]; then sed -i 's/check_defconfig//' "$BUILD_CONFIG_GKI_PATH"; else echo "$BUILD_CONFIG_GKI_PATH not found, skipping."; fi
-
-          SETLOCALVERSION_PATHS=( "./scripts/setlocalversion" "./msm-kernel/scripts/setlocalversion" "./external/dtc/scripts/setlocalversion" )
+          
+          SETLOCALVERSION_PATHS=( "./scripts/setlocalversion" )
+          if [ -d "./msm-kernel/scripts" ]; then SETLOCALVERSION_PATHS+=( "./msm-kernel/scripts/setlocalversion" ); fi
           for sl_path in "${SETLOCALVERSION_PATHS[@]}"; do
-            if [ -f "$sl_path" ]; then
-              echo "Modifying $sl_path..."
-              sed -i '$s|echo "\$res"|echo "\$res-Wild"|' "$sl_path"
-              sed -i 's/-dirty//' "$sl_path"
-            else
-              echo "$sl_path not found, skipping."
-            fi
+            if [ -f "$sl_path" ]; then sed -i '$s|echo "\$res"|echo "\$res-Wild"|' "$sl_path"; sed -i 's/-dirty//' "$sl_path"; else echo "$sl_path not found."; fi
           done
-
-          STAMP_BZL_PATH="./build/kernel/kleaf/impl/stamp.bzl"
-          if [ -f "$STAMP_BZL_PATH" ]; then sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" "$STAMP_BZL_PATH"; else echo "$STAMP_BZL_PATH not found, skipping."; fi
-          WORKSPACE_STAMP_PY_PATH="./build/kernel/kleaf/workspace_status_stamp.py"
-          if [ -f "$WORKSPACE_STAMP_PY_PATH" ]; then sed -i 's/-dirty//' "$WORKSPACE_STAMP_PY_PATH"; else echo "$WORKSPACE_STAMP_PY_PATH not found, skipping."; fi
-          
-          OPLUS_SETUP_PATH="./oplus/build/oplus_setup.sh"
-          if [ -f "$OPLUS_SETUP_PATH" ]; then
-            sed -i '/echo "LTO $LTO "/i export LTO=thin' "$OPLUS_SETUP_PATH"
-            sed -i 's/export REPACK_IMG=true/export REPACK_IMG=false/g' "$OPLUS_SETUP_PATH"
-          else
-            echo "$OPLUS_SETUP_PATH not found, skipping."
-          fi
-         
           DATESTR=$(date -u)
-          MKCOMPILE_H_PATHS=( "./scripts/mkcompile_h" "./msm-kernel/scripts/mkcompile_h" )
+          MKCOMPILE_H_PATHS=( "./scripts/mkcompile_h" )
+          if [ -d "./msm-kernel/scripts" ]; then MKCOMPILE_H_PATHS+=( "./msm-kernel/scripts/mkcompile_h" ); fi
           for mc_path in "${MKCOMPILE_H_PATHS[@]}"; do
-            if [ -f "$mc_path" ]; then
-              echo "Modifying UTS_VERSION in $mc_path..."
-              perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' "$mc_path"
-            else
-              echo "$mc_path not found, skipping."
-            fi
+            if [ -f "$mc_path" ]; then perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' "$mc_path"; else echo "$mc_path not found."; fi
           done
-          echo "Sed/Perl script finished."
 
-      - name: Setup Clang Toolchain (LineageOS Kernel Specific r416183b)
+      - name: Setup Clang Toolchain
         run: |
-          echo "Setting up Clang toolchain: LineageOS Kernel Specific r416183b..."
-          # Define the specific Clang version/directory name based on the repo
           CLANG_REPO_URL="https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git"
-          CLANG_DIR="$GITHUB_WORKSPACE/clang-r416183b" # Directory to clone into
-
-          if [ ! -d "$CLANG_DIR/bin" ]; then
-            echo "Clang r416183b not found locally, cloning from $CLANG_REPO_URL..."
-            # Clone the entire repository, as it's version-specific. No specific branch needed usually.
-            git clone "$CLANG_REPO_URL" "$CLANG_DIR" --depth=1
-          else
-            echo "Clang directory $CLANG_DIR/bin already exists."
-          fi
-          
-          if [ ! -d "$CLANG_DIR/bin" ]; then
-            echo "ERROR: Failed to clone or find Clang toolchain at $CLANG_DIR after attempting to clone $CLANG_REPO_URL"
-            # Attempt a more generic Clang as a last resort (less ideal but better than nothing for some kernels)
-            echo "Attempting fallback to a generic AOSP Clang (e.g., r450784e or similar)..."
-            FALLBACK_CLANG_VERSION="r450784e" # Or another known stable AOSP Clang
-            FALLBACK_CLANG_DIR="$GITHUB_WORKSPACE/clang-host-linux-x86-clang-${FALLBACK_CLANG_VERSION}"
-            if [ ! -d "$FALLBACK_CLANG_DIR/bin" ]; then
-                git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 "$FALLBACK_CLANG_DIR" --depth=1 -b "clang-${FALLBACK_CLANG_VERSION}" || true # Allow failure
-            fi
-            if [ -d "$FALLBACK_CLANG_DIR/bin" ]; then
-                echo "Using fallback Clang: $FALLBACK_CLANG_DIR/bin"
-                CLANG_DIR="$FALLBACK_CLANG_DIR" # Switch to fallback
-            else
-                echo "ERROR: Fallback Clang also failed to be set up."
-                exit 1
-            fi
-          fi
-          
+          CLANG_DIR="$GITHUB_WORKSPACE/clang-r416183b"
+          if [ ! -d "$CLANG_DIR/bin" ]; then git clone "$CLANG_REPO_URL" "$CLANG_DIR" --depth=1; else echo "Clang r416183b found."; fi
+          if [ ! -d "$CLANG_DIR/bin" ]; then echo "ERROR: Clang toolchain failed." >&2; exit 1; fi
           echo "$CLANG_DIR/bin" >> $GITHUB_PATH
-          echo "LLVM=1" >> $GITHUB_ENV
-          echo "LLVM_IAS=1" >> $GITHUB_ENV
+          echo "LLVM=1" >> $GITHUB_ENV; echo "LLVM_IAS=1" >> $GITHUB_ENV
           echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
-          # For these kernel-specific Clang prebuilts, CROSS_COMPILE often points to its own binutils
           echo "CROSS_COMPILE=$CLANG_DIR/bin/aarch64-linux-gnu-" >> $GITHUB_ENV 
           echo "CROSS_COMPILE_ARM32=$CLANG_DIR/bin/arm-linux-gnueabi-" >> $GITHUB_ENV
-          echo "Clang Path set to: $CLANG_DIR/bin"
-          
-          echo "Verifying Clang version..."
-          ${CLANG_DIR}/bin/clang --version || echo "clang command not found or failed after setup!"
-          
-          echo "Listing $CLANG_DIR/bin to check for cross compilers:"
-          ls -l "$CLANG_DIR/bin"
+          echo "Clang setup. Version:"; ${CLANG_DIR}/bin/clang --version
 
-      - name: Build Kernel (using Make)
-        env:
-          KBUILD_BUILD_USER: ${{ github.actor }} # Using the GitHub actor name
-          KBUILD_BUILD_HOST: "GitHubActions"   # Or any other desired host name
+      - name: Build Kernel using Make
+        env: { KBUILD_BUILD_USER: "${{ github.actor }}", KBUILD_BUILD_HOST: "GitHubActions" }
         run: |
-          echo "Changing to kernel source directory: ${{ env.KERNEL_DIR }}..."
           cd "${{ env.KERNEL_DIR }}"
-
-          KERNEL_BUILD_OUT_DIR="$(pwd)/out" 
-          mkdir -p "$KERNEL_BUILD_OUT_DIR"
-
-          echo "Building the kernel for SoC ${{ inputs.soc }} using make..."
-          echo "Kernel source: $(pwd)"
-          echo "Build output directory: $KERNEL_BUILD_OUT_DIR"
-          echo "PATH: $PATH"
-          echo "LLVM: $LLVM"
-          echo "CLANG_TRIPLE: $CLANG_TRIPLE"
-          echo "CROSS_COMPILE: $CROSS_COMPILE"
-          echo "CROSS_COMPILE_ARM32: $CROSS_COMPILE_ARM32"
-          
+          KERNEL_BUILD_OUT_DIR="$(pwd)/out"; mkdir -p "$KERNEL_BUILD_OUT_DIR"
           MAKE_ARGS="-j$(nproc) O=$KERNEL_BUILD_OUT_DIR ARCH=arm64"
-          if [ "$LLVM" == "1" ]; then
-            MAKE_ARGS="$MAKE_ARGS LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=$CLANG_TRIPLE CROSS_COMPILE=$CROSS_COMPILE CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"
-          fi
-          
-          echo "Applying defconfig: arch/arm64/configs/gki_defconfig with args: $MAKE_ARGS"
-          make $MAKE_ARGS gki_defconfig
-          
-          # Build Image and dtbs (device tree blobs) separately
-          echo "Starting kernel build (Image) with args: $MAKE_ARGS Image"
-          make $MAKE_ARGS Image
-          
-          echo "Starting DTBS build with args: $MAKE_ARGS dtbs"
-          make $MAKE_ARGS dtbs # This will create individual .dtb and .dtbo files
-          
-          echo "Build finished. Checking for artifacts in $KERNEL_BUILD_OUT_DIR..."
-          echo "--- Kernel Image Location ---"
-          ls -lh "$KERNEL_BUILD_OUT_DIR/arch/arm64/boot/Image"* 2>/dev/null || echo "Image or Image.gz not found directly in boot."
-          
-          echo "--- DTBS Output Location (Tree) ---"
-          # The exact path for .dtbo files can vary. Adjust vendor/soc if needed.
-          # More reliable to search within the output dts directory
-          OUTPUT_DTS_DIR="$KERNEL_BUILD_OUT_DIR/arch/arm64/boot/dts"
-          tree -L 5 "$OUTPUT_DTS_DIR/" || echo "Tree command failed or dts directory not structured as expected ($OUTPUT_DTS_DIR)."
-          
-          ARTIFACT_STAGING_DIR="$(dirname "$KERNEL_BUILD_OUT_DIR")/out_dist" # e.g. .../larry/out_dist
-          mkdir -p "$ARTIFACT_STAGING_DIR" 
-          echo "Staging artifacts for AnyKernel3 in: $ARTIFACT_STAGING_DIR"
-          
+          if [ "$LLVM" == "1" ]; then MAKE_ARGS="$MAKE_ARGS LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=$CLANG_TRIPLE CROSS_COMPILE=$CROSS_COMPILE CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"; fi
+          echo "Applying defconfig: arch/arm64/configs/gki_defconfig"; make $MAKE_ARGS gki_defconfig
+          echo "Building Image & dtbs"; make $MAKE_ARGS Image dtbs
+          ARTIFACT_STAGING_DIR="$(dirname "$KERNEL_BUILD_OUT_DIR")/out_dist"; mkdir -p "$ARTIFACT_STAGING_DIR"
           KERNEL_IMAGE_SRC="$KERNEL_BUILD_OUT_DIR/arch/arm64/boot/Image"
-          if [ -f "$KERNEL_IMAGE_SRC" ]; then
-            cp "$KERNEL_IMAGE_SRC" "$ARTIFACT_STAGING_DIR/Image"
-            echo "Copied Image to $ARTIFACT_STAGING_DIR/Image"
-          else
-            KERNEL_IMAGE_GZ_SRC="$KERNEL_BUILD_OUT_DIR/arch/arm64/boot/Image.gz"
-            if [ -f "$KERNEL_IMAGE_GZ_SRC" ]; then
-                gunzip -c "$KERNEL_IMAGE_GZ_SRC" > "$ARTIFACT_STAGING_DIR/Image"
-                echo "Copied and uncompressed Image.gz to $ARTIFACT_STAGING_DIR/Image"
-            else
-                echo "ERROR: Neither Image ($KERNEL_IMAGE_SRC) nor Image.gz ($KERNEL_IMAGE_GZ_SRC) found!"
-                exit 1
-            fi
-          fi
-          
-          # --- dtbo.img creation ---
-          MKDTIMG_PATH="/usr/bin/mkdtimg" 
-          if ! command -v mkdtimg &> /dev/null; then
-             if [ -f "$GITHUB_WORKSPACE/tools/mkdtimg" ]; then # Check for mkdtimg in workspace/tools
-                MKDTIMG_PATH="$GITHUB_WORKSPACE/tools/mkdtimg"
-                chmod +x "$MKDTIMG_PATH"
-                echo "Using mkdtimg from $GITHUB_WORKSPACE/tools/mkdtimg"
-             else
-                echo "WARNING: mkdtimg command not found system-wide or in $GITHUB_WORKSPACE/tools/. Cannot create dtbo.img from individual .dtbo files."
-                MKDTIMG_PATH="" 
-             fi
-          else
-            echo "Using system mkdtimg: $MKDTIMG_PATH"
-          fi
-          
-          # Search for .dtbo files within the output dts directory.
-          # Adjust the -path argument if your .dtbo files are in a specific subfolder (e.g., vendor/qcom or ${{ inputs.soc }})
-          # For a generic search within the output dts path:
-          DTBO_FILES_FOUND=$(find "$OUTPUT_DTS_DIR" -name "*.dtbo" -print)
+          if [ -f "$KERNEL_IMAGE_SRC" ]; then cp "$KERNEL_IMAGE_SRC" "$ARTIFACT_STAGING_DIR/Image"; else KERNEL_IMAGE_GZ_SRC="$KERNEL_BUILD_OUT_DIR/arch/arm64/boot/Image.gz"; if [ -f "$KERNEL_IMAGE_GZ_SRC" ]; then gunzip -c "$KERNEL_IMAGE_GZ_SRC" > "$ARTIFACT_STAGING_DIR/Image"; else echo "ERROR: Kernel Image not found!" >&2; exit 1; fi; fi
+          echo "Image staged. Staging dtbo.img..."
+          MKDTIMG_PATH="/usr/bin/mkdtimg"; OUTPUT_DTS_DIR="$KERNEL_BUILD_OUT_DIR/arch/arm64/boot/dts"
+          if ! command -v mkdtimg &> /dev/null; then if [ -f "$GITHUB_WORKSPACE/tools/mkdtimg" ]; then MKDTIMG_PATH="$GITHUB_WORKSPACE/tools/mkdtimg"; chmod +x "$MKDTIMG_PATH"; else MKDTIMG_PATH=""; fi; fi
+          DTBO_FILES_FOUND=$(find "$OUTPUT_DTS_DIR" -type f -name "*.dtbo" -print) 
+          if [ -n "$MKDTIMG_PATH" ] && [ -n "$DTBO_FILES_FOUND" ]; then DTBO_ARGS=$(echo "$DTBO_FILES_FOUND" | tr '\n' ' '); if [ -n "$DTBO_ARGS" ]; then "$MKDTIMG_PATH" create "$ARTIFACT_STAGING_DIR/dtbo.img" $DTBO_ARGS; if [ -f "$ARTIFACT_STAGING_DIR/dtbo.img" ]; then echo "dtbo.img created."; else echo "ERROR: mkdtimg failed."; fi; else echo "No .dtbo for mkdtimg."; fi; elif [ -n "$DTBO_FILES_FOUND" ]; then echo "mkdtimg missing."; else echo "No .dtbo files for dtbo.img creation."; fi
+          if [ ! -f "$ARTIFACT_STAGING_DIR/dtbo.img" ]; then for pth in "$KERNEL_BUILD_OUT_DIR/arch/arm64/boot/dtbo.img" "$KERNEL_BUILD_OUT_DIR/dtbo.img"; do if [ -f "$pth" ]; then cp "$pth" "$ARTIFACT_STAGING_DIR/dtbo.img"; echo "Used pre-existing dtbo.img from $pth"; break; fi; done; fi
+          if [ ! -f "$ARTIFACT_STAGING_DIR/dtbo.img" ]; then echo "FINAL WARNING: dtbo.img not staged."; fi
 
-          if [ -n "$MKDTIMG_PATH" ] && [ -n "$DTBO_FILES_FOUND" ]; then
-            echo "Found .dtbo files. Attempting to create dtbo.img using $MKDTIMG_PATH..."
-            # Create a space-separated list of .dtbo files.
-            DTBO_ARGS=$(echo "$DTBO_FILES_FOUND" | tr '\n' ' ')
-            # DTBO_ARGS=$(find "$OUTPUT_DTS_DIR/" -name "*.dtbo" -print | tr '\n' ' ') # Simpler find if no complex path filtering needed
-
-            if [ -n "$DTBO_ARGS" ]; then
-                echo "Running: $MKDTIMG_PATH create $ARTIFACT_STAGING_DIR/dtbo.img $DTBO_ARGS"
-                "$MKDTIMG_PATH" create "$ARTIFACT_STAGING_DIR/dtbo.img" $DTBO_ARGS
-                if [ -f "$ARTIFACT_STAGING_DIR/dtbo.img" ]; then
-                    echo "Successfully created $ARTIFACT_STAGING_DIR/dtbo.img"
-                else
-                    echo "ERROR: Failed to create dtbo.img using mkdtimg."
-                fi
-            else
-                echo "WARNING: No .dtbo files found by find command for mkdtimg arguments within $OUTPUT_DTS_DIR."
-            fi
-          elif [ -n "$DTBO_FILES_FOUND" ]; then
-            echo "WARNING: .dtbo files were found, but mkdtimg tool is not available. dtbo.img will not be created."
-          else
-            echo "INFO: No .dtbo files found in $OUTPUT_DTS_DIR or mkdtimg not available. Skipping dtbo.img creation from individual files."
-          fi
-          
-          # Fallback: Check if a pre-existing dtbo.img was somehow created by 'make dtbs' or is in a standard output location
-          if [ ! -f "$ARTIFACT_STAGING_DIR/dtbo.img" ]; then
-            echo "dtbo.img not created by mkdtimg, checking for pre-existing dtbo.img..."
-            DTBO_PREBUILT_PATHS=(
-              "$KERNEL_BUILD_OUT_DIR/arch/arm64/boot/dtbo.img" 
-              "$KERNEL_BUILD_OUT_DIR/dtbo.img" # Some very custom setups might output here
-            )
-            for dtbo_path_try in "${DTBO_PREBUILT_PATHS[@]}"; do
-              if [ -f "$dtbo_path_try" ]; then
-                cp "$dtbo_path_try" "$ARTIFACT_STAGING_DIR/dtbo.img"
-                echo "Copied pre-existing dtbo.img from $dtbo_path_try to $ARTIFACT_STAGING_DIR/dtbo.img"
-                break
-              fi
-            done
-          fi
-          
-          if [ ! -f "$ARTIFACT_STAGING_DIR/dtbo.img" ]; then
-            echo "FINAL WARNING: dtbo.img was not found or created in $ARTIFACT_STAGING_DIR."
-          fi
-      
-      - name: Copy Images to AnyKernel3
+      - name: Copy Staged Images to AnyKernel3
         run: |
-          ARTIFACT_SOURCE_DIR="$GITHUB_WORKSPACE/${{ env.CONFIG_VAR_NAME }}/out_dist"
+          ARTIFACT_SOURCE_DIR="$GITHUB_WORKSPACE/${{ env.MODEL_CODENAME }}/out_dist"
           ANYKERNEL_DIR="$GITHUB_WORKSPACE/AnyKernel3"
-
-          echo "Source artifact directory: $ARTIFACT_SOURCE_DIR"
-          echo "Target AnyKernel3 directory: $ANYKERNEL_DIR"
-
-          if [ ! -d "$ARTIFACT_SOURCE_DIR" ]; then echo "ERROR: Artifact staging directory $ARTIFACT_SOURCE_DIR not found."; exit 1; fi
-          if [ ! -f "$ARTIFACT_SOURCE_DIR/Image" ]; then echo "ERROR: $ARTIFACT_SOURCE_DIR/Image not found."; exit 1; fi
-
-          echo "Copying Images to $ANYKERNEL_DIR..."
+          if [ ! -d "$ARTIFACT_SOURCE_DIR" ] || [ ! -f "$ARTIFACT_SOURCE_DIR/Image" ]; then echo "ERROR: Staged artifacts missing." >&2; exit 1; fi
           cp "$ARTIFACT_SOURCE_DIR/Image" "$ANYKERNEL_DIR/Image"
-          
-          if [ "${{ inputs.model }}" == "OPAce5Pro" ]; then
-            if [ -f "$ARTIFACT_SOURCE_DIR/dtbo.img" ]; then cp "$ARTIFACT_SOURCE_DIR/dtbo.img" "$ANYKERNEL_DIR/"; else echo "Warning: dtbo.img not found for OPAce5Pro in $ARTIFACT_SOURCE_DIR"; fi
-          elif [ "${{ inputs.model }}" == "larry" ]; then
-            echo "Copying images for larry (OnePlus Nord CE 3 Lite 5G)"
-            if [ -f "$ARTIFACT_SOURCE_DIR/dtbo.img" ]; then cp "$ARTIFACT_SOURCE_DIR/dtbo.img" "$ANYKERNEL_DIR/dtbo.img"; else echo "Warning: dtbo.img not found for larry in $ARTIFACT_SOURCE_DIR"; fi
-            if [ -f "$ARTIFACT_SOURCE_DIR/vendor_boot.img" ]; then cp "$ARTIFACT_SOURCE_DIR/vendor_boot.img" "$ANYKERNEL_DIR/vendor_boot.img"; echo "Copied vendor_boot.img"; fi
-            if [ -f "$ARTIFACT_SOURCE_DIR/vendor_dlkm.img" ]; then cp "$ARTIFACT_SOURCE_DIR/vendor_dlkm.img" "$ANYKERNEL_DIR/vendor_dlkm.img"; echo "Copied vendor_dlkm.img"; fi
-            if [ ! -f "$ARTIFACT_SOURCE_DIR/vendor_boot.img" ] && [ ! -f "$ARTIFACT_SOURCE_DIR/vendor_dlkm.img" ]; then echo "Info: Neither vendor_boot.img nor vendor_dlkm.img found (expected)."; fi
-          fi
+          if [ "${{ env.MODEL_CODENAME }}" == "larry" ]; then if [ -f "$ARTIFACT_SOURCE_DIR/dtbo.img" ]; then cp "$ARTIFACT_SOURCE_DIR/dtbo.img" "$ANYKERNEL_DIR/dtbo.img"; else echo "No dtbo.img for larry."; fi; fi
 
-      - name: Create ZIP Files for Different Formats
+      - name: Create AnyKernel3 ZIP Package
         run: |
-          ANYKERNEL_DIR="$GITHUB_WORKSPACE/AnyKernel3"
-          echo "Navigating to AnyKernel3 directory: $ANYKERNEL_DIR"
-          cd "$ANYKERNEL_DIR"
-          
-          ZIP_NAME="${{ inputs.model }}_A${{ inputs.android_version }}_K${{ inputs.kernel_version }}_KSUNext_${{ env.KSUVER }}_SUSFS_AnyKernel3.zip"
-          echo "Creating zip file ../$ZIP_NAME from $(pwd)..."
-          zip -r9 "../$ZIP_NAME" ./* -x ".git/*" -x ".github/*" -x "__MACOSX"
-          
-          if [ "${{ inputs.model }}" == "OPAce5Pro" ]; then
-            echo "Applying OPAce5Pro specific modifications for CN version..."
-            if [ ! -f "./dtbo.img" ]; then
-                echo "Warning: dtbo.img not found in AnyKernel3 for OPAce5Pro CN version. Skipping."
-            else
-                mkdir -p ../cn_zip_temp 
-                cp -r ./* ../cn_zip_temp/
-                sed -i 's/hmbird/xxbird/g' ../cn_zip_temp/dtbo.img
-                (cd ../cn_zip_temp && zip -r9 "../../${ZIP_NAME%.zip}-CN-version.zip" ./* -x ".git/*" -x ".github/*" -x "__MACOSX")
-                rm -rf ../cn_zip_temp
-            fi
-          fi
-          cd "$GITHUB_WORKSPACE" 
-          echo "Listing ZIP files in $GITHUB_WORKSPACE:"
-          ls -alh *.zip
+          ANYKERNEL_DIR="$GITHUB_WORKSPACE/AnyKernel3"; cd "$ANYKERNEL_DIR"
+          KSU_VERSION_FOR_ZIP="${{ env.KSUVER || 'DevBuild' }}" 
+          ZIP_NAME="${{ env.MODEL_CODENAME }}_A${{ inputs.android_version_name }}_K${{ inputs.kernel_version_string }}_KSUNext_${KSU_VERSION_FOR_ZIP}_SUSFS_AnyKernel3.zip"
+          echo "Creating zip: ../$ZIP_NAME"; zip -r9 "../$ZIP_NAME" ./* -x ".git/*" -x ".github/*" -x "__MACOSX"
+          if [ "${{ env.MODEL_CODENAME }}" == "OPAce5Pro" ]; then if [ -f "./dtbo.img" ]; then mkdir -p ../cn_zip_temp && cp -r ./* ../cn_zip_temp/ && sed -i 's/hmbird/xxbird/g' ../cn_zip_temp/dtbo.img && (cd ../cn_zip_temp && zip -r9 "../../${ZIP_NAME%.zip}-CN-version.zip" ./* -x ".git/*" -x ".github/*" -x "__MACOSX") && rm -rf ../cn_zip_temp; else echo "No dtbo for OPAce5Pro CN zip."; fi; fi
+          cd "$GITHUB_WORKSPACE"; ls -alh *.zip
 
-      - name: Upload Build Artifacts
+      - name: Upload Build Artifacts (Patch Logs and Kernel ZIPs)
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: kernel-${{ env.CONFIG_VAR_NAME }}-${{ inputs.android_version }}-${{ env.KSUVER }}
+          name: build-artifacts-${{ env.MODEL_CODENAME }}
           path: |
-            *.zip 
-          if-no-files-found: error
+            ${{ github.workspace }}/*.zip
+            ${{ github.workspace }}/patch_logs/
+          if-no-files-found: ignore 
