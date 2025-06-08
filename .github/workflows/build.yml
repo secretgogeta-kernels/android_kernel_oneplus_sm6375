@@ -135,12 +135,12 @@ jobs:
           cd "$CONFIG"
           
           echo "Cloning kernel source..."
-          git clone https://github.com/Teamhackneyed/android_kernel_oneplus_sm6375.git -b "${{ inputs.branch }}" --depth=1 .
+          git clone https://github.com/Teamhackneyed/android_kernel_oneplus_sm6375.git -b "${{ inputs.branch }}" --depth=1
           
       - name: Add KernelSU Next
         run: |
           echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/kernel_platform"
+          cd "$CONFIG/android_kernel_oneplus_sm6375"
           
           echo "Adding KernelSU Next..."
           
@@ -155,7 +155,7 @@ jobs:
       - name: Apply SUSFS Patches
         run: |
           echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/kernel_platform"
+          cd "$CONFIG/android_kernel_oneplus_sm6375"
           
           echo "Applying SUSFS patches..."
           
@@ -200,7 +200,7 @@ jobs:
       - name: Apply KSUN Hooks
         run: |
           echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/kernel_platform/common"
+          cd "$CONFIG/android_kernel_oneplus_sm6375/common"
           echo "Applying KSUN Hooks..."
           cp ../../../kernel_patches/next/syscall_hooks.patch ./
           patch -p1 --fuzz=3 < ./syscall_hooks.patch
@@ -208,7 +208,7 @@ jobs:
       - name: Apply Hide Stuff Patches
         run: |
           echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/kernel_platform/common"
+          cd "$CONFIG/android_kernel_oneplus_sm6375/common"
           # Apply additional patch
           cp ../../../kernel_patches/69_hide_stuff.patch ./
           patch -p1 -F 3 < 69_hide_stuff.patch
@@ -216,7 +216,7 @@ jobs:
       - name: Add KernelSU-Next and SUSFS Configuration Settings
         run: |
           echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG/kernel_platform"
+          cd "$CONFIG/android_kernel_oneplus_sm6375"
           
           echo "Adding configuration settings to gki_defconfig..."
           
