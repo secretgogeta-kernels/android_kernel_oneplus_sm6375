@@ -287,37 +287,95 @@ jobs:
           echo "CONFIG_IP6_NF_MATCH_HL=y" >> $DEFCONFIG_PATH
 
       - name: Run sed and perl Commands
+        shell: /usr/bin/bash -e {0}
         run: |
+          set -e # Ensure script exits on error
+
           echo "Changing to kernel source directory: $CONFIG/android_kernel_oneplus_sm6375..."
-          cd "$CONFIG/android_kernel_oneplus_sm6375" 
+          # Ensure the target directory exists before trying to cd into it
+          if [ ! -d "$CONFIG/android_kernel_oneplus_sm6375" ]; then
+            echo "Error: Kernel source directory $CONFIG/android_kernel_oneplus_sm6375 not found!"
+            exit 1
+          fi
+          cd "$CONFIG/android_kernel_oneplus_sm6375"
+
           DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"
-          
+
           echo "Running sed commands on $DEFCONFIG_PATH and scripts..."
-          
-          sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG_PATH"
-          sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG_PATH"
-          sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG_PATH"
-          
-          # Run sed commands for modifications
-          sed -i 's/check_defconfig//' ./build.config.gki
-          sed -i '$s|echo "\$res"|echo "\$res-Wild"|' ./scripts/setlocalversion
-          # msm-kernel might not exist in all generic kernel sources, or path might differ
-          [ -f ./msm-kernel/scripts/setlocalversion ] && sed -i '$s|echo "\$res"|echo "\$res-Wild"|' ./msm-kernel/scripts/setlocalversion || echo "msm-kernel/scripts/setlocalversion not found, skipping."
-          [ -f ./external/dtc/scripts/setlocalversion ] && sed -i '$s|echo "\$res"|echo "\$res-Wild"|' ./external/dtc/scripts/setlocalversion || echo "external/dtc/scripts/setlocalversion not found, skipping."
-          
-          sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl || echo "No stamp.bzl!"
-          sed -i 's/-dirty//' ./scripts/setlocalversion
-          [ -f ./msm-kernel/scripts/setlocalversion ] && sed -i 's/-dirty//' ./msm-kernel/scripts/setlocalversion || echo "msm-kernel/scripts/setlocalversion not found, skipping."
-          [ -f ./external/dtc/scripts/setlocalversion ] && sed -i 's/-dirty//' ./external/dtc/scripts/setlocalversion || echo "external/dtc/scripts/setlocalversion not found, skipping."
-          sed -i 's/-dirty//' ./build/kernel/kleaf/workspace_status_stamp.py || echo "No workspace_status_stamp.py!"
-          
-          sed -i '/echo "LTO $LTO "/i export LTO=thin' ./oplus/build/oplus_setup.sh
-          sed -i 's/export REPACK_IMG=true/export REPACK_IMG=false/g' ./oplus/build/oplus_setup.sh
+
+          # --- Defconfig Modifications ---
+          if [ -f "$DEFCONFIG_PATH" ]; then
+            sed -i 's/CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG_PATH"
+            sed -i 's/CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG_PATH"
+            sed -i 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG_PATH"
+          else
+            echo "Warning: $DEFCONFIG_PATH not found, skipping defconfig modifications."
+          fi
+
+          # --- build.config.gki Modification ---
+          BUILD_CONFIG_GKI_PATH="./build.config.gki"
+          if [ -f "$BUILD_CONFIG_GKI_PATH" ]; then
+            sed -i 's/check_defconfig//' "$BUILD_CONFIG_GKI_PATH"
+          else
+            echo "$BUILD_CONFIG_GKI_PATH not found, skipping."
+          fi
+
+          # --- setlocalversion Modifications ---
+          SETLOCALVERSION_PATHS=(
+            "./scripts/setlocalversion"
+            "./msm-kernel/scripts/setlocalversion"
+            "./external/dtc/scripts/setlocalversion"
+          )
+          for sl_path in "${SETLOCALVERSION_PATHS[@]}"; do
+            if [ -f "$sl_path" ]; then
+              echo "Modifying $sl_path..."
+              sed -i '$s|echo "\$res"|echo "\$res-Wild"|' "$sl_path"
+              sed -i 's/-dirty//' "$sl_path"
+            else
+              echo "$sl_path not found, skipping."
+            fi
+          done
+
+          # --- Kleaf stamp.bzl Modification ---
+          STAMP_BZL_PATH="./build/kernel/kleaf/impl/stamp.bzl"
+          if [ -f "$STAMP_BZL_PATH" ]; then
+            sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" "$STAMP_BZL_PATH"
+          else
+            echo "$STAMP_BZL_PATH not found, skipping. (Original message: No stamp.bzl!)"
+          fi
+
+          # --- Kleaf workspace_status_stamp.py Modification ---
+          WORKSPACE_STAMP_PY_PATH="./build/kernel/kleaf/workspace_status_stamp.py"
+          if [ -f "$WORKSPACE_STAMP_PY_PATH" ]; then
+            sed -i 's/-dirty//' "$WORKSPACE_STAMP_PY_PATH"
+          else
+            echo "$WORKSPACE_STAMP_PY_PATH not found, skipping. (Original message: No workspace_status_stamp.py!)"
+          fi
+
+          # --- oplus_setup.sh Modifications ---
+          OPLUS_SETUP_PATH="./oplus/build/oplus_setup.sh"
+          if [ -f "$OPLUS_SETUP_PATH" ]; then
+            sed -i '/echo "LTO $LTO "/i export LTO=thin' "$OPLUS_SETUP_PATH"
+            sed -i 's/export REPACK_IMG=true/export REPACK_IMG=false/g' "$OPLUS_SETUP_PATH"
+          else
+            echo "$OPLUS_SETUP_PATH not found, skipping."
+          fi
          
-          # Run perl command to modify UTS_VERSION
+          # --- mkcompile_h UTS_VERSION Modification ---
           DATESTR=$(date -u)
-          perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./scripts/mkcompile_h
-          [ -f ./msm-kernel/scripts/mkcompile_h ] && perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $DATESTR"}' ./msm-kernel/scripts/mkcompile_h || echo "msm-kernel/scripts/mkcompile_h not found, skipping."
+          MKCOMPILE_H_PATHS=(
+            "./scripts/mkcompile_h"
+            "./msm-kernel/scripts/mkcompile_h"
+          )
+          for mc_path in "${MKCOMPILE_H_PATHS[@]}"; do
+            if [ -f "$mc_path" ]; then
+              echo "Modifying UTS_VERSION in $mc_path..."
+              perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT '"$DATESTR"'"}' "$mc_path"
+            else
+              echo "$mc_path not found, skipping."
+            fi
+          done
+          echo "Script finished."
 
       - name: Build the Kernel
         run: |
