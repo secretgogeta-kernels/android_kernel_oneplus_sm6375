@@ -215,8 +215,8 @@ jobs:
         run: |
           echo "Changing to kernel source directory: $CONFIG/android_kernel_oneplus_sm6375..."
           cd "$CONFIG/android_kernel_oneplus_sm6375"
-          cp ../../../kernel_patches/69_hide_stuff.patch ./ # This path is relative to $CONFIG/android_kernel_oneplus_sm6375
-          patch -p1 -F 3 < 69_hide_stuff.patch
+          # Apply additional patch
+          cp ../../../kernel_patches/69_hide_stuff.patch ./patch -p1 -F 3 < 69_hide_stuff.patch
 
       - name: Add KernelSU-Next and SUSFS Configuration Settings
         run: |
