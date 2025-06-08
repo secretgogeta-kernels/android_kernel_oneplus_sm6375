@@ -287,10 +287,10 @@ jobs:
           if [ -f "$DEFCONFIG_PATH" ]; then
             echo "Adding TTL target configuration settings to $DEFCONFIG_PATH..."
             cat <<EOF >> $DEFCONFIG_PATH
-CONFIG_IP_NF_TARGET_TTL=y
-CONFIG_IP6_NF_TARGET_HL=y
-CONFIG_IP6_NF_MATCH_HL=y
-EOF
+            CONFIG_IP_NF_TARGET_TTL=y
+            CONFIG_IP6_NF_TARGET_HL=y
+            CONFIG_IP6_NF_MATCH_HL=y
+            EOF
           else
             echo "Warning: $DEFCONFIG_PATH not found in TTL step. Skipping."
           fi
