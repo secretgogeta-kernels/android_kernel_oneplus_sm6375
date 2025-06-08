@@ -259,22 +259,25 @@ jobs:
           EOF
 
       - name: Add BBR Support (Optional TCP Congestion Control)
+        shell: bash
         run: |
+          set -e
           echo "Changing to kernel source directory: ${{ env.KERNEL_DIR }}..."
           cd "${{ env.KERNEL_DIR }}"
           DEFCONFIG_PATH="./arch/arm64/configs/gki_defconfig"
           if [ -f "$DEFCONFIG_PATH" ]; then
             echo "Adding BBR configuration settings to $DEFCONFIG_PATH..."
-            cat <<EOF >> $DEFCONFIG_PATH
-            CONFIG_TCP_CONG_ADVANCED=y
-            CONFIG_TCP_CONG_BBR=y
-            CONFIG_DEFAULT_TCP_CONG="bbr"
-            CONFIG_TCP_CONG_BIC=n
-            CONFIG_TCP_CONG_WESTWOOD=n
-            CONFIG_TCP_CONG_HTCP=n
-            CONFIG_NET_SCH_FQ=y
-            CONFIG_NET_SCH_FQ_CODEL=y
-            EOF
+            # Using <<-EOF to allow indentation within the heredoc in the script
+            cat <<-EOF >> "$DEFCONFIG_PATH"
+              CONFIG_TCP_CONG_ADVANCED=y
+              CONFIG_TCP_CONG_BBR=y
+              CONFIG_DEFAULT_TCP_CONG="bbr"
+              CONFIG_TCP_CONG_BIC=n
+              CONFIG_TCP_CONG_WESTWOOD=n
+              CONFIG_TCP_CONG_HTCP=n
+              CONFIG_NET_SCH_FQ=y
+              CONFIG_NET_SCH_FQ_CODEL=y
+            EOF # This EOF can also be indented (ideally with tabs if using <<-EOF)
           else
             echo "Warning: $DEFCONFIG_PATH not found in BBR step. Skipping."
           fi
