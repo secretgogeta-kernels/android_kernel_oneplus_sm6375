@@ -51,14 +51,22 @@ jobs:
       KERNEL_DIR: "${{ github.workspace }}/${{ inputs.model }}/android_kernel_oneplus_sm6375"
       DEBIAN_FRONTEND: noninteractive
 
-    steps:
+    steps:     
       - name: Setup System Environment and Dependencies
         run: |
+          export DEBIAN_FRONTEND=noninteractive # Set it in the script too for apt
           echo "DEBIAN_FRONTEND=noninteractive" >> $GITHUB_ENV
+          
           df -h
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/share/swift || true
-          sudo docker image prune --all --force
-          sudo apt-get update -qq
+          
+          echo "Removing large pre-installed software..."
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/share/swift || echo "Some rm -rf removals failed, continuing..."
+          sudo docker image prune --all --force || echo "Docker prune failed, continuing..."
+          
+          echo "Updating package lists..."
+          sudo apt-get update -qq || { echo "ERROR: apt-get update failed!" >&2; exit 1; }
+          
+          echo "Purging selected packages..."
           sudo apt-get purge -y \
             aria2 ansible azure-cli shellcheck rpm xorriso zsync \
             esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable \
@@ -68,17 +76,28 @@ jobs:
             unixodbc-dev yarn chrpath libssl-dev libxft-dev \
             libfreetype6 libfreetype6-dev libfontconfig1 libfontconfig1-dev \
             snmp pollinate libpq-dev postgresql-client powershell ruby-full \
-            sphinxsearch subversion mongodb-org microsoft-edge-stable > /dev/null 2>&1 || true
-          sudo apt-get purge -y $(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet') > /dev/null 2>&1 || true
-          sudo apt-get autoremove -y > /dev/null 2>&1
-          sudo apt-get autoclean -y > /dev/null 2>&1
+            sphinxsearch subversion mongodb-org microsoft-edge-stable || echo "Warning: Some packages in the first purge list might not have been installed."
+          
+          sudo apt-get purge -y $(dpkg-query -W -f='${binary:Package}\n' | grep -E '^mysql|^php|^dotnet' || echo "") || echo "Warning: Purge of mysql/php/dotnet might have had issues."
+          # The '|| echo ""' inside dpkg-query subshell handles cases where grep finds nothing, preventing dpkg-query error from propagating to apt-get.
+          
+          echo "Running autoremove and autoclean..."
+          sudo apt-get autoremove -y || echo "Warning: autoremove had issues."
+          sudo apt-get autoclean -y || echo "Warning: autoclean had issues."
+          
+          echo "Installing essential build dependencies..."
+          # REMOVE > /dev/null 2>&1 temporarily to see errors
           sudo apt-get install -y --no-install-recommends \
             git curl python3 python-is-python3 tree \
             build-essential bc libssl-dev libelf-dev \
             bison flex rsync libncurses-dev \
-            zip unzip tar gzip bzip2 lzop patch awk > /dev/null 2>&1 # Added awk
-          echo "System setup complete."
+            zip unzip tar gzip bzip2 lzop patch awk
+            
+          # If the above install fails, it will now show the error from apt-get
+          # If it succeeds, then the exit 100 might be from something else, but apt is primary suspect.
 
+          echo "System setup complete."
+          df -h
       - name: Install Repo Tool
         run: |
           mkdir -p ${{ github.workspace }}/git-repo-tool
