@@ -7,7 +7,6 @@ on:
       - main # Or your default branch where this workflow file resides
     paths:
       - '.github/workflows/build.yml' # Rebuild if workflow changes
-
 jobs:
   build_kernel:
     name: Build Kernel with GCC 9.3
@@ -68,7 +67,10 @@ jobs:
 
           # Add toolchain's bin directory to PATH for general access
           echo "${GCC64_TOOLCHAIN_DIR}/bin" >> $GITHUB_PATH
-
+      
+      - name: Debugging with tmate
+        uses: mxschmitt/action-tmate@v3.22
+        
       - name: Compile Kernel
         run: |
           set -ex
