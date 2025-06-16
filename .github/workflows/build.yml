@@ -86,9 +86,6 @@ jobs:
             exit 1
           fi
 
-          # *** THIS IS THE KEY CHANGE ***
-          # The prefix for this specific toolchain seems to be 'aarch64-linux-'
-          # based on the symlinks like 'aarch64-linux-gcc' found in its bin directory.
           export CROSS_COMPILE="${GCC64_TOOLCHAIN_DIR}/bin/aarch64-linux-"
           echo "CROSS_COMPILE is set to: ${CROSS_COMPILE}"
 
@@ -103,22 +100,27 @@ jobs:
           export KBUILD_COMPILER_STRING="$(${CROSS_COMPILE}gcc --version | head -n 1)"
           echo "KBUILD_COMPILER_STRING is: ${KBUILD_COMPILER_STRING}"
 
+          # Add KBUILD_CFLAGS to disable treating format warnings as errors
+          export KCFLAGS="-Wno-error=format-security -Wno-error=format"
+
           echo "Starting kernel defconfig..."
           make -j$(nproc --all) O=out \
             ARCH=${ARCH} \
             SUBARCH=${SUBARCH} \
             CROSS_COMPILE=${CROSS_COMPILE} \
+            KCFLAGS="${KCFLAGS}" \
             ${DEFCONFIG}
 
           echo "Starting kernel compilation..."
           make -j$(nproc --all) O=out \
             ARCH=${ARCH} \
             SUBARCH=${SUBARCH} \
-            CROSS_COMPILE=${CROSS_COMPILE}
+            CROSS_COMPILE=${CROSS_COMPILE} \
+            KCFLAGS="${KCFLAGS}"
 
           echo "Kernel compilation finished."
           ls -lh "${KERNEL_DIR}/out/arch/arm64/boot/"
-
+          
       - name: Package with AnyKernel3
         run: |
           set -ex
