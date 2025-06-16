@@ -21,7 +21,7 @@ jobs:
 
       - name: Set up build environment
         run: |
-          set -ex # Exit on error, print commands
+          set -ex
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             bc bison build-essential ccache curl flex \
@@ -32,70 +32,46 @@ jobs:
       - name: Set Swap Space
         uses: pierotofy/set-swap-space@master
         with:
-          swap-size-gb: 12 # Adjust as needed, compilation can be memory intensive
+          swap-size-gb: 12
 
       - name: Prepare Toolchain and Sources
         run: |
-          set -ex # Exit on error, print commands
-
+          set -ex
           mkdir -p "${HOME}/toolchains"
           export KERNEL_DIR="${PWD}/kernel_source"
           export ANYKERNEL_DIR="${PWD}/anykernel3"
-          export GCC64_TOOLCHAIN_DIR="${HOME}/toolchains/gcc-aarch64-linux-gnu-9.3"
+          export GCC64_TOOLCHAIN_DIR="${HOME}/toolchains/gcc-aarch64-toolchain-9.3" # Slightly changed name for clarity
 
           echo "KERNEL_DIR=${KERNEL_DIR}" >> $GITHUB_ENV
           echo "ANYKERNEL_DIR=${ANYKERNEL_DIR}" >> $GITHUB_ENV
           echo "GCC64_TOOLCHAIN_DIR=${GCC64_TOOLCHAIN_DIR}" >> $GITHUB_ENV
 
-          # Clone Kernel Source
           echo "Cloning Kernel Source..."
           git clone --depth=1 -b lineage-22.2 https://github.com/Teamhackneyed/android_kernel_oneplus_sm6375 "${KERNEL_DIR}"
 
-          # Clone AnyKernel3
           echo "Cloning AnyKernel3..."
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "${ANYKERNEL_DIR}"
 
-          # Clone LineageOS GCC aarch64 9.3 toolchain
           echo "Cloning GCC aarch64 9.3 toolchain into ${GCC64_TOOLCHAIN_DIR}..."
           git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-gnu-9.3.git "${GCC64_TOOLCHAIN_DIR}"
           
           echo "--- Debugging Toolchain Path ---"
           echo "Listing contents of ${GCC64_TOOLCHAIN_DIR}:"
           ls -lA "${GCC64_TOOLCHAIN_DIR}"
-          
           echo "Listing contents of ${GCC64_TOOLCHAIN_DIR}/bin (if it exists):"
           if [ -d "${GCC64_TOOLCHAIN_DIR}/bin" ]; then
             ls -lA "${GCC64_TOOLCHAIN_DIR}/bin"
           else
             echo "${GCC64_TOOLCHAIN_DIR}/bin directory NOT FOUND."
           fi
-          
-          export EXPECTED_GCC_PATH="${GCC64_TOOLCHAIN_DIR}/bin/aarch64-linux-gnu-gcc"
-          echo "Checking for specific compiler at ${EXPECTED_GCC_PATH}:"
-          if [ -f "${EXPECTED_GCC_PATH}" ]; then
-            echo "Compiler FOUND at ${EXPECTED_GCC_PATH}."
-            echo "Permissions:"
-            ls -l "${EXPECTED_GCC_PATH}"
-            echo "Attempting to get version:"
-            "${EXPECTED_GCC_PATH}" --version
-          else
-            echo "Compiler NOT FOUND at ${EXPECTED_GCC_PATH}!"
-            echo "Attempting to find 'aarch64-linux-gnu-gcc' anywhere within ${GCC64_TOOLCHAIN_DIR}..."
-            find "${GCC64_TOOLCHAIN_DIR}" -name "aarch64-linux-gnu-gcc"
-            echo "If the compiler was not found or the paths above are incorrect, the build will likely fail."
-            # Consider exiting here if essential file is missing: exit 1
-          fi
           echo "--- End Debugging Toolchain Path ---"
 
-          # Add toolchain to PATH
+          # Add toolchain's bin directory to PATH for general access
           echo "${GCC64_TOOLCHAIN_DIR}/bin" >> $GITHUB_PATH
-          # GITHUB_ENV is used to pass full paths, GITHUB_PATH is for executables in PATH
-          # The script later uses the full path via $GCC64_TOOLCHAIN_DIR, so PATH modification here is for convenience if calling directly.
 
       - name: Compile Kernel
         run: |
-          set -ex # Exit on error, print commands
-
+          set -ex
           cd "${KERNEL_DIR}"
           export ARCH=arm64
           export SUBARCH=arm64
@@ -104,22 +80,23 @@ jobs:
           export DEFCONFIG=gki_defconfig
           export KERNEL_IMAGE_NAME=Image
 
-          # Ensure GCC64_TOOLCHAIN_DIR is available from the environment
           echo "GCC64_TOOLCHAIN_DIR is: ${GCC64_TOOLCHAIN_DIR}"
           if [ -z "${GCC64_TOOLCHAIN_DIR}" ]; then
             echo "Error: GCC64_TOOLCHAIN_DIR is not set!"
             exit 1
           fi
 
-          export CROSS_COMPILE="${GCC64_TOOLCHAIN_DIR}/bin/aarch64-linux-gnu-"
+          # *** THIS IS THE KEY CHANGE ***
+          # The prefix for this specific toolchain seems to be 'aarch64-linux-'
+          # based on the symlinks like 'aarch64-linux-gcc' found in its bin directory.
+          export CROSS_COMPILE="${GCC64_TOOLCHAIN_DIR}/bin/aarch64-linux-"
           echo "CROSS_COMPILE is set to: ${CROSS_COMPILE}"
 
-          # Test if the compiler can be invoked using the CROSS_COMPILE prefix
           echo "Attempting to get GCC version using CROSS_COMPILE prefix:"
           if ! "${CROSS_COMPILE}gcc" --version; then
             echo "Error: Failed to execute ${CROSS_COMPILE}gcc --version"
-            echo "Checking if the path ${GCC64_TOOLCHAIN_DIR}/bin/aarch64-linux-gnu-gcc exists and is executable:"
-            ls -l "${GCC64_TOOLCHAIN_DIR}/bin/aarch64-linux-gnu-gcc" || echo "File not found or no permission."
+            echo "Checking if the path ${GCC64_TOOLCHAIN_DIR}/bin/aarch64-linux-gcc exists and is executable:"
+            ls -l "${GCC64_TOOLCHAIN_DIR}/bin/aarch64-linux-gcc" || echo "File ${GCC64_TOOLCHAIN_DIR}/bin/aarch64-linux-gcc not found or no permission."
             exit 1
           fi
           
@@ -144,7 +121,7 @@ jobs:
 
       - name: Package with AnyKernel3
         run: |
-          set -ex # Exit on error, print commands
+          set -ex
           cd "${ANYKERNEL_DIR}"
           export KERNEL_IMAGE_PATH="${KERNEL_DIR}/out/arch/arm64/boot/Image"
 
