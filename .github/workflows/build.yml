@@ -1,4 +1,4 @@
-name: Build OnePlus SM6375 Kernel with GCC 9.3
+name: Build OnePlus SM6375 Kernel with GCC 9.3 (64-bit only toolchain)
 
 on:
   workflow_dispatch: # Allows manual triggering
@@ -39,12 +39,10 @@ jobs:
           export KERNEL_DIR="${PWD}/kernel_source"
           export ANYKERNEL_DIR="${PWD}/anykernel3"
           export GCC64_TOOLCHAIN_DIR="${HOME}/toolchains/gcc-aarch64-linux-gnu-9.3"
-          export GCC32_TOOLCHAIN_DIR="${HOME}/toolchains/gcc-arm-linux-androideabi-4.9" # For 32-bit parts
 
           echo "KERNEL_DIR=${KERNEL_DIR}" >> $GITHUB_ENV
           echo "ANYKERNEL_DIR=${ANYKERNEL_DIR}" >> $GITHUB_ENV
           echo "GCC64_TOOLCHAIN_DIR=${GCC64_TOOLCHAIN_DIR}" >> $GITHUB_ENV
-          echo "GCC32_TOOLCHAIN_DIR=${GCC32_TOOLCHAIN_DIR}" >> $GITHUB_ENV
 
           # Clone Kernel Source
           git clone --depth=1 -b lineage-22.2 https://github.com/Teamhackneyed/android_kernel_oneplus_sm6375 "${KERNEL_DIR}"
@@ -54,17 +52,11 @@ jobs:
 
           # Clone LineageOS GCC aarch64 9.3 toolchain
           echo "Cloning GCC aarch64 9.3 toolchain..."
-          # This repo doesn't seem to use specific release branches like lineage-19.1, so clone default
           git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-gnu-9.3.git "${GCC64_TOOLCHAIN_DIR}"
 
-          # Clone LineageOS GCC arm 4.9 toolchain (for arm32 cross-compile)
-          echo "Cloning GCC arm 4.9 toolchain..."
-          git clone --depth=1 -b lineage-22.2 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git "${GCC32_TOOLCHAIN_DIR}"
-
-          # Add toolchains to PATH
+          # Add toolchain to PATH
           echo "${GCC64_TOOLCHAIN_DIR}/bin" >> $GITHUB_PATH
-          echo "${GCC32_TOOLCHAIN_DIR}/bin" >> $GITHUB_PATH
-          echo "PATH=${GCC64_TOOLCHAIN_DIR}/bin:${GCC32_TOOLCHAIN_DIR}/bin:${PATH}" >> $GITHUB_ENV
+          echo "PATH=${GCC64_TOOLCHAIN_DIR}/bin:${PATH}" >> $GITHUB_ENV
 
       - name: Compile Kernel
         run: |
@@ -76,36 +68,29 @@ jobs:
           export DEFCONFIG=gki_defconfig
           export KERNEL_IMAGE_NAME=Image # GKI typically outputs 'Image'
 
-          # Set CROSS_COMPILE paths using the environment variables set earlier
+          # Set CROSS_COMPILE path using the environment variable set earlier
           # The prefix for the GCC 9.3 toolchain is aarch64-linux-gnu-
           export CROSS_COMPILE="${GCC64_TOOLCHAIN_DIR}/bin/aarch64-linux-gnu-"
-          export CROSS_COMPILE_ARM32="${GCC32_TOOLCHAIN_DIR}/bin/arm-linux-androideabi-"
 
           export KBUILD_COMPILER_STRING="$(${CROSS_COMPILE}gcc --version | head -n 1)"
 
           # Verify GCC is found
           which aarch64-linux-gnu-gcc
           aarch64-linux-gnu-gcc --version
-          which arm-linux-androideabi-gcc
-          arm-linux-androideabi-gcc --version
 
           echo "Starting kernel compilation..."
-          echo "Using 64-bit GCC: $(${CROSS_COMPILE}gcc --version | head -n 1)"
-          echo "Using 32-bit GCC: $(${CROSS_COMPILE_ARM32}gcc --version | head -n 1)"
-
+          echo "Using GCC: $(${CROSS_COMPILE}gcc --version | head -n 1)"
 
           make -j$(nproc --all) O=out \
             ARCH=${ARCH} \
             SUBARCH=${SUBARCH} \
             CROSS_COMPILE=${CROSS_COMPILE} \
-            CROSS_COMPILE_ARM32=${CROSS_COMPILE_ARM32} \
             ${DEFCONFIG}
 
           make -j$(nproc --all) O=out \
             ARCH=${ARCH} \
             SUBARCH=${SUBARCH} \
-            CROSS_COMPILE=${CROSS_COMPILE} \
-            CROSS_COMPILE_ARM32=${CROSS_COMPILE_ARM32}
+            CROSS_COMPILE=${CROSS_COMPILE}
 
           echo "Kernel compilation finished."
           ls -lh "${KERNEL_DIR}/out/arch/arm64/boot/"
