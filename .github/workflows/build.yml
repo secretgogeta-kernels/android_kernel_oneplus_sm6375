@@ -1,4 +1,4 @@
-name: Build Kernel
+name: Build OnePlus SM6375 Kernel
 
 on:
   workflow_dispatch: # Allows manual triggering
@@ -7,55 +7,178 @@ on:
       - main # Or your default branch where this workflow file resides
     paths:
       - '.github/workflows/build.yml' # Rebuild if workflow changes
-# Define the jobs to be executed
+
 jobs:
-  build:
-    # Use the latest Ubuntu runner
+  build_kernel:
+    name: Build Kernel
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # To allow creating releases or pushing artifacts (optional)
 
-    # Steps to perform in the job
     steps:
-      # Step 1: Checkout the kernel source repository
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: lineage-22.2
 
-      # Step 2: Install build dependencies
-      - name: Install dependencies
+      - name: Set up build environment
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev gcc-aarch64-linux-gnu clang
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ccache curl flex \
+            git imagemagick libncurses5-dev libssl-dev \
+            llvm lld make rsync unzip wget zip kmod \
+            software-properties-common
 
-      # Step 3: Compile the kernel
-      - name: Compile kernel
+      - name: Set Swap Space
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 12 # Adjust as needed, compilation can be memory intensive
+
+      - name: Prepare Toolchain and Sources
         run: |
+          mkdir -p "${HOME}/toolchains"
+          export KERNEL_DIR="${PWD}/kernel_source"
+          export ANYKERNEL_DIR="${PWD}/anykernel3"
+          export CLANG_DIR="${HOME}/toolchains/clang-r510928"
+          export GCC32_DIR="${HOME}/toolchains/gcc-arm-11"
+          export GCC64_DIR="${HOME}/toolchains/gcc-aarch64-11"
+
+          echo "KERNEL_DIR=${KERNEL_DIR}" >> $GITHUB_ENV
+          echo "ANYKERNEL_DIR=${ANYKERNEL_DIR}" >> $GITHUB_ENV
+          echo "CLANG_DIR=${CLANG_DIR}" >> $GITHUB_ENV
+          echo "GCC32_DIR=${GCC32_DIR}" >> $GITHUB_ENV
+          echo "GCC64_DIR=${GCC64_DIR}" >> $GITHUB_ENV
+
+          # Clone Kernel Source
+          git clone --depth=1 -b lineage-22.2 https://github.com/Teamhackneyed/android_kernel_oneplus_sm6375 "${KERNEL_DIR}"
+
+          # Clone AnyKernel3
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "${ANYKERNEL_DIR}"
+
+          # Download and Extract AOSP Clang (r510928 - Android 14)
+          echo "Downloading Clang..."
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-14.0.0_r5.tar.gz -O clang.tar.gz
+          mkdir -p "${CLANG_DIR}"
+          tar -xzf clang.tar.gz -C "${CLANG_DIR}"
+          rm clang.tar.gz
+
+          # Download and Extract AOSP GCC (for arm32 cross-compile)
+          echo "Downloading GCC arm..."
+          wget -q https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz -O gcc-arm.tar.gz
+          mkdir -p "${GCC32_DIR}"
+          tar -xzf gcc-arm.tar.gz -C "${GCC32_DIR}"
+          rm gcc-arm.tar.gz
+
+          # Download and Extract AOSP GCC (for aarch64 cross-compile, though Clang handles most)
+          echo "Downloading GCC aarch64..."
+          wget -q https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz -O gcc-aarch64.tar.gz
+          mkdir -p "${GCC64_DIR}"
+          tar -xzf gcc-aarch64.tar.gz -C "${GCC64_DIR}"
+          rm gcc-aarch64.tar.gz
+
+          # Add toolchains to PATH
+          echo "${CLANG_DIR}/bin" >> $GITHUB_PATH
+          echo "${GCC32_DIR}/bin" >> $GITHUB_PATH
+          echo "${GCC64_DIR}/bin" >> $GITHUB_PATH
+          echo "PATH=${CLANG_DIR}/bin:${GCC32_DIR}/bin:${GCC64_DIR}/bin:${PATH}" >> $GITHUB_ENV
+
+      - name: Compile Kernel
+        run: |
+          cd "${KERNEL_DIR}"
           export ARCH=arm64
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          make gki_defconfig
-          make -j$(nproc) CC=clang HOSTCC=clang
+          export SUBARCH=arm64
+          export KBUILD_BUILD_USER="YourGitHubUsername" # Change this
+          export KBUILD_BUILD_HOST="GitHubActions"
+          export KBUILD_COMPILER_STRING="$(${CLANG_DIR}/bin/clang --version | head -n 1 | perl -pe 's/\(http.*?\)//gs' | sed -e 's/  */ /g')"
+          export DEFCONFIG=gki_defconfig
+          export KERNEL_IMAGE_NAME=Image # GKI typically outputs 'Image'
 
-      # Step 4: Clone AnyKernel3 repository
-      - name: Clone AnyKernel3
+          # For Clang builds
+          export CC="clang"
+          export LD="ld.lld"
+          export AR="llvm-ar"
+          export NM="llvm-nm"
+          export OBJCOPY="llvm-objcopy"
+          export OBJDUMP="llvm-objdump"
+          export STRIP="llvm-strip"
+          export CROSS_COMPILE="aarch64-linux-gnu-" # For tools like objcopy if not using llvm-objcopy directly, Clang handles compilation
+          export CROSS_COMPILE_ARM32="arm-linux-androideabi-" # For 32-bit vDSO or modules
+
+          echo "Starting kernel compilation..."
+          echo "Using Clang: $(${CC} --version | head -n 1)"
+          echo "Using LD: $(${LD} --version | head -n 1)"
+
+          make -j$(nproc --all) O=out \
+            ARCH=${ARCH} \
+            SUBARCH=${SUBARCH} \
+            CC=${CC} \
+            LD=${LD} \
+            AR=${AR} \
+            NM=${NM} \
+            OBJCOPY=${OBJCOPY} \
+            OBJDUMP=${OBJDUMP} \
+            STRIP=${STRIP} \
+            CROSS_COMPILE=${CROSS_COMPILE} \
+            CROSS_COMPILE_ARM32=${CROSS_COMPILE_ARM32} \
+            ${DEFCONFIG}
+
+          make -j$(nproc --all) O=out \
+            ARCH=${ARCH} \
+            SUBARCH=${SUBARCH} \
+            CC=${CC} \
+            LD=${LD} \
+            AR=${AR} \
+            NM=${NM} \
+            OBJCOPY=${OBJCOPY} \
+            OBJDUMP=${OBJDUMP} \
+            STRIP=${STRIP} \
+            CROSS_COMPILE=${CROSS_COMPILE} \
+            CROSS_COMPILE_ARM32=${CROSS_COMPILE_ARM32}
+
+          echo "Kernel compilation finished."
+          ls -lh "${KERNEL_DIR}/out/arch/arm64/boot/"
+
+      - name: Package with AnyKernel3
         run: |
-          git clone https://github.com/osm0sis/AnyKernel3.git
+          cd "${ANYKERNEL_DIR}"
+          export KERNEL_IMAGE_PATH="${KERNEL_DIR}/out/arch/arm64/boot/Image" # Adjust if your kernel outputs something else like Image.gz
 
-      # Step 5: Set up AnyKernel3 with the compiled kernel
-      - name: Set up AnyKernel3
-        run: |
-          cp arch/arm64/boot/Image.gz AnyKernel3/
-          # Set the device name in anykernel.sh (assuming codename is oneplus_sm6375)
-          sed -i 's/device.name1=/device.name1=oneplus_sm6375/' AnyKernel3/anykernel.sh
+          if [ ! -f "${KERNEL_IMAGE_PATH}" ]; then
+            echo "Kernel image not found at ${KERNEL_IMAGE_PATH}!"
+            exit 1
+          fi
 
-      # Step 6: Create the flashable zip
-      - name: Create flashable zip
-        run: |
-          cd AnyKernel3
-          zip -r9 ../kernel.zip *
+          # Copy kernel image to AnyKernel3 directory
+          cp "${KERNEL_IMAGE_PATH}" .
 
-      # Step 7: Upload the zip as an artifact
-      - name: Upload artifact
+          # Optional: If your kernel builds dtbo.img and you want to include it
+          # export DTBO_IMAGE_PATH="${KERNEL_DIR}/out/arch/arm64/boot/dtbo.img" # Example path
+          # if [ -f "${DTBO_IMAGE_PATH}" ]; then
+          #   cp "${DTBO_IMAGE_PATH}" .
+          #   echo "Copied dtbo.img"
+          # else
+          #   echo "dtbo.img not found, skipping."
+          # fi
+
+          # Optional: Update anykernel.sh if needed (e.g., device checks, specific properties)
+          # sed -i 's/kernel.string=.*/kernel.string=MyCustomKernel by YourName/' anykernel.sh
+          # sed -i 's/device.name1=.*/device.name1=your_device_codename/' anykernel.sh # e.g. kona, lito
+
+          # Create ZIP file
+          export ZIP_NAME="SM6375_Kernel_$(date +%Y%m%d-%H%M).zip"
+          echo "ZIP_NAME=${ZIP_NAME}" >> $GITHUB_ENV
+
+          zip -r9 "${ZIP_NAME}" * -x ".git*" "*placeholder" "LICENSE" "README.md"
+          echo "Flashable ZIP created: ${ZIP_NAME}"
+
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kernel
-          path: kernel.zip
+          name: ${{ env.ZIP_NAME }}
+          path: ${{ env.ANYKERNEL_DIR }}/${{ env.ZIP_NAME }}
+
+      - name: Upload Kernel Image (for debugging)
+        if: success() # Only if previous steps succeeded
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kernel_Image
+          path: ${{ env.KERNEL_DIR }}/out/arch/arm64/boot/Image # Or Image.gz if that's the output
