@@ -23,7 +23,7 @@ jobs:
         sudo apt-get install -y \
           build-essential libssl-dev libncurses-dev \
           bison flex bc rsync kmod cpio python3 \
-          clang llvm lld libelf-dev git wget
+          clang llvm lld libelf-dev git wget zip
 
     - name: Download Config
       run: |
@@ -32,20 +32,23 @@ jobs:
 
     - name: Setup Toolchains
       run: |
-        # Install GCC
+        # Criar diretório temporário para extração segura
+        mkdir toolchain_extract
+        
+        # Baixar e extrair Clang em diretório isolado
+        wget -q https://github.com/ZyCromerZ/Clang/releases/download/21.0.0git-20250617-release/Clang-21.0.0git-20250617.tar.gz -P toolchain_extract
+        tar -xzf toolchain_extract/Clang-21.0.0git-20250617.tar.gz -C toolchain_extract
+        
+        # Mover conteúdo extraído para kernel/clang
+        mkdir -p kernel/clang
+        mv toolchain_extract/* kernel/clang/
+        
+        # Instalar GCC dentro de kernel/gcc
         git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-gnu-9.3 kernel/gcc
         
-        # Install Clang
-        wget https://github.com/ZyCromerZ/Clang/releases/download/21.0.0git-20250617-release/Clang-21.0.0git-20250617.tar.gz
-        tar -xzf Clang-21.0.0git-20250617.tar.gz
-        mv Clang-21.0.0git-20250617 kernel/clang
-        rm Clang-21.0.0git-20250617.tar.gz
+        # Limpeza
+        rm -rf toolchain_extract
 
-    - name: Debugging with tmate
-      # You may pin to the exact commit or the version.
-      # uses: mxschmitt/action-tmate@7b6a61a73bbb9793cb80ad69b8dd8ac19261834c
-      uses: mxschmitt/action-tmate@v3.22
-      
     - name: Prepare Build Environment
       run: |
         cd kernel
@@ -60,15 +63,22 @@ jobs:
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=$(pwd)/gcc/bin/aarch64-linux-gnu- \
             LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
             LLVM=1 \
             LLVM_IAS=1
 
     - name: Setup AnyKernel3
       run: |
         git clone https://github.com/osm0sis/AnyKernel3
-        cp kernel/out/arch/arm64/boot/Image.gz AnyKernel3/
         mkdir -p AnyKernel3/dtbs
-        cp kernel/out/arch/arm64/boot/dts/vendor/*.dtb AnyKernel3/dtbs/
+        
+        # Copiar artefatos de compilação
+        cp kernel/out/arch/arm64/boot/Image.gz AnyKernel3/
+        cp kernel/out/arch/arm64/boot/dts/vendor/*.dtb AnyKernel3/dtbs/ 2>/dev/null || true
 
     - name: Create Flashable Zip
       run: |
