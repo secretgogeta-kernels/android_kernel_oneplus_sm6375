@@ -16,9 +16,8 @@ jobs:
       with:
         repository: Teamhackneyed/android_kernel_oneplus_sm6375
         path: kernel
-        # Força um clone limpo a cada execução
-        fetch-depth: 0
         clean: true
+        fetch-depth: 0
 
     - name: Install Dependencies
       run: |
@@ -28,50 +27,20 @@ jobs:
           bison flex bc rsync kmod cpio python3 \
           clang llvm lld libelf-dev git wget zip
 
-    - name: Deep Clean Source Tree
+    - name: Nuclear Clean
       run: |
         cd kernel
         
-        # 1. Resetar quaisquer alterações acidentais
+        # 1. Remover tudo exceto o diretório .git
+        find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
+        
+        # 2. Restaurar código fonte do repositório
         git reset --hard
         git clean -fdx
         
-        # 2. Remover diretórios específicos de build
-        rm -rf out .config
-        
-        # 3. Limpeza profunda de artefatos de compilação
-        find . -type f \( \
-            -name '*.o' \
-            -o -name '*.ko' \
-            -o -name '*.cmd' \
-            -o -name '*.d' \
-            -o -name '*.tmp' \
-            -o -name '*.mod' \
-            -o -name '*.mod.c' \
-            -o -name '*.order' \
-            -o -name '*.symvers' \
-            -o -name 'modules.builtin' \
-            -o -name 'Module.symvers' \
-            -o -name '*.gcno' \
-            -o -name '*.gcda' \
-            -o -name '*.dtb' \
-            -o -name '*.dtbo' \
-        \) -delete
-        
-        # 4. Remover diretórios de build recursivamente
-        find . \( \
-            -name '.*.o.tmp' \
-            -o -name '.*.ko.tmp' \
-            -o -name '.tmp_versions' \
-            -o -name '__pycache__' \
-            -o -name '.*.d' \
-            -o -name '.*.cmd' \
-        \) -exec rm -rf {} + || true
-        
-        # 5. Limpeza especial para diretórios problemáticos
-        if [ -d "tools/testing/selftests" ]; then
-            find tools/testing/selftests -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} + || true
-        fi
+        # 3. Verificar status do git
+        echo "Git status after nuclear clean:"
+        git status
 
     - name: Setup Toolchains
       run: |
@@ -97,21 +66,27 @@ jobs:
         wget https://github.com/secretgogeta-kernels/android_kernel_oneplus_sm6375/releases/download/A/config.gz -O kernel/config.gz
         gunzip -c kernel/config.gz > kernel/.config
 
+    - name: Force Initialize Build Directory
+      run: |
+        cd kernel
+        # Criar diretório out vazio
+        rm -rf out
+        mkdir out
+        
+        # Executar um make vazio para inicializar
+        make ARCH=arm64 O=out -f /dev/null
+
     - name: Prepare Build Environment
       run: |
         cd kernel
-        # Forçar criação do diretório out
-        mkdir -p out
-        
-        # Executar oldconfig com tratamento de erros
         make ARCH=arm64 O=out CC=$(pwd)/clang/bin/clang \
             CROSS_COMPILE=$(pwd)/gcc/bin/aarch64-linux-gnu- \
-            oldconfig </dev/null || true
+            oldconfig </dev/null
 
     - name: Build Kernel
       run: |
         cd kernel
-        # Forçar rebuild completo
+        # Forçar rebuild completo com limpeza automática
         make -j$(nproc) ARCH=arm64 O=out CC=$(pwd)/clang/bin/clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=$(pwd)/gcc/bin/aarch64-linux-gnu- \
@@ -123,8 +98,11 @@ jobs:
             STRIP=llvm-strip \
             LLVM=1 \
             LLVM_IAS=1 \
-            KCFLAGS="-fno-pie"
+            KCFLAGS="-fno-pie" \
+            KBUILD_BUILD_VERSION=1 \
+            KBUILD_BUILD_TIMESTAMP=$(date +%s)
 
+    # ... restante do workflow permanece igual ...
     - name: Setup AnyKernel3
       run: |
         git clone https://github.com/osm0sis/AnyKernel3
