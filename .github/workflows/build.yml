@@ -28,7 +28,24 @@ jobs:
     - name: Clean Source Tree
       run: |
         cd kernel
-        make ARCH=arm64 mrproper
+        # Verificar se o Makefile existe
+        if [ ! -f Makefile ]; then
+          echo "Makefile not found! Listing directory:"
+          ls -la
+          exit 1
+        fi
+        
+        # Executar mrproper apenas se o alvo existir
+        if make -n mrproper &> /dev/null; then
+          make ARCH=arm64 mrproper
+        else
+          echo "mrproper target not found, using manual clean"
+          rm -rf out .config
+          find . -name '*.o' -delete
+          find . -name '*.cmd' -delete
+          find . -name '*.d' -delete
+          find . -name '*.tmp' -delete
+        fi
 
     - name: Setup Toolchains
       run: |
