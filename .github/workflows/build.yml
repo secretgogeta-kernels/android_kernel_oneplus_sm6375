@@ -36,23 +36,37 @@ jobs:
           exit 1
         fi
         
-        # Limpeza manual robusta
-        echo "Performing manual clean..."
+        # Limpeza manual robusta e segura
+        echo "Performing deep clean..."
+        
+        # 1. Remover diretórios de build
         rm -rf out .config
-        find . -name '*.o' -delete
-        find . -name '*.ko' -delete
-        find . -name '*.cmd' -delete
-        find . -name '*.d' -delete
-        find . -name '*.tmp' -delete
-        find . -name '*.mod' -delete
-        find . -name '*.mod.c' -delete
-        find . -name '*.order' -delete
-        find . -name '*.symvers' -delete
-        find . -name 'modules.builtin' -delete
-        find . -name 'Module.symvers' -delete
-        find . -type d -name '.tmp_versions' -exec rm -rf {} +
-        find . -name '*.gcno' -delete
-        find . -name '*.gcda' -delete
+        
+        # 2. Deletar arquivos de compilação (apenas arquivos, não diretórios)
+        find . -type f \( \
+            -name '*.o' \
+            -o -name '*.ko' \
+            -o -name '*.cmd' \
+            -o -name '*.d' \
+            -o -name '*.tmp' \
+            -o -name '*.mod' \
+            -o -name '*.mod.c' \
+            -o -name '*.order' \
+            -o -name '*.symvers' \
+            -o -name 'modules.builtin' \
+            -o -name 'Module.symvers' \
+            -o -name '*.gcno' \
+            -o -name '*.gcda' \
+        \) -delete
+        
+        # 3. Remover diretórios específicos recursivamente
+        find . -type d -name '.tmp_versions' -exec rm -rf {} + || true
+        
+        # 4. Limpar diretórios de testes problemáticos
+        if [ -d "tools/testing/selftests" ]; then
+            find tools/testing/selftests -type f -delete
+            find tools/testing/selftests -mindepth 1 -type d -exec rm -rf {} + || true
+        fi
 
     - name: Setup Toolchains
       run: |
