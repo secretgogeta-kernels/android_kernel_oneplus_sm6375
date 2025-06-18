@@ -117,7 +117,7 @@ jobs:
         mv kernel.zip ../
 
     - name: Upload Artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: kernel-build
         path: |
