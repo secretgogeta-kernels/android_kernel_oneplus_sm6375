@@ -25,10 +25,10 @@ jobs:
           bison flex bc rsync kmod cpio python3 \
           clang llvm lld libelf-dev git wget zip
 
-    - name: Download Config
+    - name: Clean Source Tree
       run: |
-        wget https://github.com/secretgogeta-kernels/android_kernel_oneplus_sm6375/releases/download/A/config.gz -O kernel/config.gz
-        gunzip -c kernel/config.gz > kernel/.config
+        cd kernel
+        make ARCH=arm64 mrproper
 
     - name: Setup Toolchains
       run: |
@@ -49,11 +49,10 @@ jobs:
         # Limpeza
         rm -rf toolchain_extract
 
-    - name: Verify Kernel Structure
+    - name: Download Config
       run: |
-        cd kernel
-        ls -la  # Verificar se Makefile está presente
-        echo "Kernel source verified"
+        wget https://github.com/secretgogeta-kernels/android_kernel_oneplus_sm6375/releases/download/A/config.gz -O kernel/config.gz
+        gunzip -c kernel/config.gz > kernel/.config
 
     - name: Prepare Build Environment
       run: |
