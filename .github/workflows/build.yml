@@ -14,7 +14,7 @@ jobs:
     - name: Checkout Kernel Source
       uses: actions/checkout@v4
       with:
-        repository: secretgogeta-kernels/android_kernel_oneplus_sm6375
+        repository: Teamhackneyed/android_kernel_oneplus_sm6375
         path: kernel
 
     - name: Install Dependencies
@@ -35,7 +35,7 @@ jobs:
         # Criar diretório temporário para extração segura
         mkdir toolchain_extract
         
-        # Baixar e extrair Clang em diretório isolado
+        # Baixar e extrair Clang
         wget -q https://github.com/ZyCromerZ/Clang/releases/download/21.0.0git-20250617-release/Clang-21.0.0git-20250617.tar.gz -P toolchain_extract
         tar -xzf toolchain_extract/Clang-21.0.0git-20250617.tar.gz -C toolchain_extract
         
@@ -43,11 +43,17 @@ jobs:
         mkdir -p kernel/clang
         mv toolchain_extract/* kernel/clang/
         
-        # Instalar GCC dentro de kernel/gcc
+        # Instalar GCC
         git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-gnu-9.3 kernel/gcc
         
         # Limpeza
         rm -rf toolchain_extract
+
+    - name: Verify Kernel Structure
+      run: |
+        cd kernel
+        ls -la  # Verificar se Makefile está presente
+        echo "Kernel source verified"
 
     - name: Prepare Build Environment
       run: |
