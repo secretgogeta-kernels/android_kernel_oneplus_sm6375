@@ -10,7 +10,7 @@ on:
 jobs:
   build_kernel:
     name: Build Kernel with GCC 9.3
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     permissions:
       contents: write # To allow creating releases or pushing artifacts (optional)
 
