@@ -28,6 +28,7 @@ jobs:
     - name: Clean Source Tree
       run: |
         cd kernel
+        
         # Verificar se o Makefile existe
         if [ ! -f Makefile ]; then
           echo "Makefile not found! Listing directory:"
@@ -35,17 +36,23 @@ jobs:
           exit 1
         fi
         
-        # Executar mrproper apenas se o alvo existir
-        if make -n mrproper &> /dev/null; then
-          make ARCH=arm64 mrproper
-        else
-          echo "mrproper target not found, using manual clean"
-          rm -rf out .config
-          find . -name '*.o' -delete
-          find . -name '*.cmd' -delete
-          find . -name '*.d' -delete
-          find . -name '*.tmp' -delete
-        fi
+        # Limpeza manual robusta
+        echo "Performing manual clean..."
+        rm -rf out .config
+        find . -name '*.o' -delete
+        find . -name '*.ko' -delete
+        find . -name '*.cmd' -delete
+        find . -name '*.d' -delete
+        find . -name '*.tmp' -delete
+        find . -name '*.mod' -delete
+        find . -name '*.mod.c' -delete
+        find . -name '*.order' -delete
+        find . -name '*.symvers' -delete
+        find . -name 'modules.builtin' -delete
+        find . -name 'Module.symvers' -delete
+        find . -type d -name '.tmp_versions' -exec rm -rf {} +
+        find . -name '*.gcno' -delete
+        find . -name '*.gcda' -delete
 
     - name: Setup Toolchains
       run: |
