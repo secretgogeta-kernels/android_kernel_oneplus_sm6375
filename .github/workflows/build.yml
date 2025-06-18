@@ -41,6 +41,11 @@ jobs:
         mv Clang-21.0.0git-20250617 kernel/clang
         rm Clang-21.0.0git-20250617.tar.gz
 
+    - name: Debugging with tmate
+      # You may pin to the exact commit or the version.
+      # uses: mxschmitt/action-tmate@7b6a61a73bbb9793cb80ad69b8dd8ac19261834c
+      uses: mxschmitt/action-tmate@v3.22
+      
     - name: Prepare Build Environment
       run: |
         cd kernel
