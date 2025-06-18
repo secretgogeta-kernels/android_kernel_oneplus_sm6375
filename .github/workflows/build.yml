@@ -1,153 +1,80 @@
-name: Build OnePlus SM6375 Kernel with GCC 9.3 (64-bit only toolchain)
+name: Kernel Builder
 
 on:
-  workflow_dispatch: # Allows manual triggering
+  workflow_dispatch:
   push:
-    branches:
-      - main # Or your default branch where this workflow file resides
-    paths:
-      - '.github/workflows/build.yml' # Rebuild if workflow changes
+    branches: [ main ]
+
 jobs:
-  build_kernel:
-    name: Build Kernel with GCC 9.3
+  build-kernel:
     runs-on: ubuntu-22.04
-    permissions:
-      contents: write # To allow creating releases or pushing artifacts (optional)
+    timeout-minutes: 120
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    - name: Checkout Kernel Source
+      uses: actions/checkout@v4
+      with:
+        repository: secretgogeta-kernels/android_kernel_oneplus_sm6375
+        path: kernel
 
-      - name: Set up build environment
-        run: |
-          set -ex
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            bc bison build-essential ccache curl flex \
-            git imagemagick libncurses5-dev libssl-dev \
-            make rsync unzip wget zip kmod \
-            software-properties-common
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential libssl-dev libncurses-dev \
+          bison flex bc rsync kmod cpio python3 \
+          clang llvm lld libelf-dev git wget
 
-      - name: Set Swap Space
-        uses: pierotofy/set-swap-space@master
-        with:
-          swap-size-gb: 12
+    - name: Download Config
+      run: |
+        wget https://github.com/secretgogeta-kernels/android_kernel_oneplus_sm6375/releases/download/A/config.gz -O kernel/config.gz
+        gunzip -c kernel/config.gz > kernel/.config
 
-      - name: Prepare Toolchain and Sources
-        run: |
-          set -ex
-          mkdir -p "${HOME}/toolchains"
-          export KERNEL_DIR="${PWD}/kernel_source"
-          export ANYKERNEL_DIR="${PWD}/anykernel3"
-          export GCC64_TOOLCHAIN_DIR="${HOME}/toolchains/gcc-aarch64-toolchain-9.3" # Slightly changed name for clarity
-
-          echo "KERNEL_DIR=${KERNEL_DIR}" >> $GITHUB_ENV
-          echo "ANYKERNEL_DIR=${ANYKERNEL_DIR}" >> $GITHUB_ENV
-          echo "GCC64_TOOLCHAIN_DIR=${GCC64_TOOLCHAIN_DIR}" >> $GITHUB_ENV
-
-          echo "Cloning Kernel Source..."
-          git clone --depth=1 -b lineage-22.2 https://github.com/Teamhackneyed/android_kernel_oneplus_sm6375 "${KERNEL_DIR}"
-
-          echo "Cloning AnyKernel3..."
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "${ANYKERNEL_DIR}"
-
-          echo "Cloning GCC aarch64 9.3 toolchain into ${GCC64_TOOLCHAIN_DIR}..."
-          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-gnu-9.3.git "${GCC64_TOOLCHAIN_DIR}"
-          
-          echo "--- Debugging Toolchain Path ---"
-          echo "Listing contents of ${GCC64_TOOLCHAIN_DIR}:"
-          ls -lA "${GCC64_TOOLCHAIN_DIR}"
-          echo "Listing contents of ${GCC64_TOOLCHAIN_DIR}/bin (if it exists):"
-          if [ -d "${GCC64_TOOLCHAIN_DIR}/bin" ]; then
-            ls -lA "${GCC64_TOOLCHAIN_DIR}/bin"
-          else
-            echo "${GCC64_TOOLCHAIN_DIR}/bin directory NOT FOUND."
-          fi
-          echo "--- End Debugging Toolchain Path ---"
-
-          # Add toolchain's bin directory to PATH for general access
-          echo "${GCC64_TOOLCHAIN_DIR}/bin" >> $GITHUB_PATH
-      
-      - name: Debugging with tmate
-        uses: mxschmitt/action-tmate@v3.22
+    - name: Setup Toolchains
+      run: |
+        # Install GCC
+        git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-gnu-9.3 kernel/gcc
         
-      - name: Compile Kernel
-        run: |
-          set -ex
-          cd "${KERNEL_DIR}"
-          export ARCH=arm64
-          export SUBARCH=arm64
-          export KBUILD_BUILD_USER="YourGitHubUsername" # Change this
-          export KBUILD_BUILD_HOST="GitHubActions"
-          export DEFCONFIG=gki_defconfig
-          export KERNEL_IMAGE_NAME=Image
+        # Install Clang
+        wget https://github.com/ZyCromerZ/Clang/releases/download/21.0.0git-20250617-release/Clang-21.0.0git-20250617.tar.gz
+        tar -xzf Clang-21.0.0git-20250617.tar.gz
+        mv clang-21.0.0git-20250617 kernel/clang
+        rm Clang-21.0.0git-20250617.tar.gz
 
-          echo "GCC64_TOOLCHAIN_DIR is: ${GCC64_TOOLCHAIN_DIR}"
-          if [ -z "${GCC64_TOOLCHAIN_DIR}" ]; then
-            echo "Error: GCC64_TOOLCHAIN_DIR is not set!"
-            exit 1
-          fi
+    - name: Prepare Build Environment
+      run: |
+        cd kernel
+        make ARCH=arm64 O=out CC=$(pwd)/clang/bin/clang \
+            CROSS_COMPILE=$(pwd)/gcc/bin/aarch64-linux-gnu- \
+            oldconfig </dev/null
 
-          export CROSS_COMPILE="${GCC64_TOOLCHAIN_DIR}/bin/aarch64-linux-"
-          echo "CROSS_COMPILE is set to: ${CROSS_COMPILE}"
+    - name: Build Kernel
+      run: |
+        cd kernel
+        make -j$(nproc) ARCH=arm64 O=out CC=$(pwd)/clang/bin/clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=$(pwd)/gcc/bin/aarch64-linux-gnu- \
+            LD=ld.lld \
+            LLVM=1 \
+            LLVM_IAS=1
 
-          echo "Attempting to get GCC version using CROSS_COMPILE prefix:"
-          if ! "${CROSS_COMPILE}gcc" --version; then
-            echo "Error: Failed to execute ${CROSS_COMPILE}gcc --version"
-            echo "Checking if the path ${GCC64_TOOLCHAIN_DIR}/bin/aarch64-linux-gcc exists and is executable:"
-            ls -l "${GCC64_TOOLCHAIN_DIR}/bin/aarch64-linux-gcc" || echo "File ${GCC64_TOOLCHAIN_DIR}/bin/aarch64-linux-gcc not found or no permission."
-            exit 1
-          fi
-          
-          export KBUILD_COMPILER_STRING="$(${CROSS_COMPILE}gcc --version | head -n 1)"
-          echo "KBUILD_COMPILER_STRING is: ${KBUILD_COMPILER_STRING}"
+    - name: Setup AnyKernel3
+      run: |
+        git clone https://github.com/osm0sis/AnyKernel3
+        cp kernel/out/arch/arm64/boot/Image.gz AnyKernel3/
+        mkdir -p AnyKernel3/dtbs
+        cp kernel/out/arch/arm64/boot/dts/vendor/*.dtb AnyKernel3/dtbs/
 
-          # Add KBUILD_CFLAGS to disable treating format warnings as errors
-          export KCFLAGS="-Wno-error=format-security -Wno-error=format"
+    - name: Create Flashable Zip
+      run: |
+        cd AnyKernel3
+        zip -r9 kernel.zip *
+        mv kernel.zip ../
 
-          echo "Starting kernel defconfig..."
-          make -j$(nproc --all) O=out \
-            ARCH=${ARCH} \
-            SUBARCH=${SUBARCH} \
-            CROSS_COMPILE=${CROSS_COMPILE} \
-            KCFLAGS="${KCFLAGS}" \
-            ${DEFCONFIG}
-
-          echo "Starting kernel compilation..."
-          make -j$(nproc --all) O=out \
-            ARCH=${ARCH} \
-            SUBARCH=${SUBARCH} \
-            CROSS_COMPILE=${CROSS_COMPILE} \
-            KCFLAGS="${KCFLAGS}"
-
-          echo "Kernel compilation finished."
-          ls -lh "${KERNEL_DIR}/out/arch/arm64/boot/"
-          
-      - name: Package with AnyKernel3
-        run: |
-          set -ex
-          cd "${ANYKERNEL_DIR}"
-          export KERNEL_IMAGE_PATH="${KERNEL_DIR}/out/arch/arm64/boot/Image"
-
-          if [ ! -f "${KERNEL_IMAGE_PATH}" ]; then
-            echo "Kernel image not found at ${KERNEL_IMAGE_PATH}!"
-            exit 1
-          fi
-          cp "${KERNEL_IMAGE_PATH}" .
-          export ZIP_NAME="SM6375_Kernel_GCC9_$(date +%Y%m%d-%H%M).zip"
-          echo "ZIP_NAME=${ZIP_NAME}" >> $GITHUB_ENV
-          zip -r9 "${ZIP_NAME}" * -x ".git*" "*placeholder" "LICENSE" "README.md"
-          echo "Flashable ZIP created: ${ZIP_NAME}"
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ZIP_NAME }}
-          path: ${{ env.ANYKERNEL_DIR }}/${{ env.ZIP_NAME }}
-
-      - name: Upload Kernel Image (for debugging)
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Kernel_Image_GCC9
-          path: ${{ env.KERNEL_DIR }}/out/arch/arm64/boot/Image
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: kernel-build
+        path: |
+          kernel.zip
+          kernel/out/arch/arm64/boot/Image.gz
