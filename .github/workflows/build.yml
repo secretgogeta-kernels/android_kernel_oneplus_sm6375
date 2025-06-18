@@ -17,7 +17,12 @@ jobs:
         repository: Teamhackneyed/android_kernel_oneplus_sm6375
         path: kernel
         clean: true
-        fetch-depth: 0
+        fetch-depth: 1  # Usar fetch-depth:1 para economizar espaço
+
+    - name: Remove Git History
+      run: |
+        # Remover completamente o histórico do Git para evitar detecção de "dirty tree"
+        rm -rf kernel/.git
 
     - name: Install Dependencies
       run: |
@@ -27,39 +32,18 @@ jobs:
           bison flex bc rsync kmod cpio python3 \
           clang llvm lld libelf-dev git wget zip
 
-    - name: Nuclear Clean
-      run: |
-        cd kernel
-        
-        # 1. Remover tudo exceto o diretório .git
-        find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
-        
-        # 2. Restaurar código fonte do repositório
-        git reset --hard
-        git clean -fdx
-        
-        # 3. Verificar status do git
-        echo "Git status after nuclear clean:"
-        git status
-
     - name: Setup Toolchains
       run: |
-        # Criar diretório temporário para extração segura
-        mkdir toolchain_extract
-        
-        # Baixar e extrair Clang
-        wget -q https://github.com/ZyCromerZ/Clang/releases/download/21.0.0git-20250617-release/Clang-21.0.0git-20250617.tar.gz -P toolchain_extract
-        tar -xzf toolchain_extract/Clang-21.0.0git-20250617.tar.gz -C toolchain_extract
-        
-        # Mover conteúdo extraído para kernel/clang
+        # Baixar Clang diretamente para um diretório temporário
+        mkdir clang_temp
+        wget -q https://github.com/ZyCromerZ/Clang/releases/download/21.0.0git-20250617-release/Clang-21.0.0git-20250617.tar.gz -O clang_temp/clang.tar.gz
+        tar -xzf clang_temp/clang.tar.gz -C clang_temp
         mkdir -p kernel/clang
-        mv toolchain_extract/* kernel/clang/
-        
+        mv clang_temp/* kernel/clang/
+        rm -rf clang_temp
+
         # Instalar GCC
         git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-gnu-9.3 kernel/gcc
-        
-        # Limpeza
-        rm -rf toolchain_extract
 
     - name: Download Config
       run: |
@@ -69,22 +53,42 @@ jobs:
     - name: Prepare Build Environment
       run: |
         cd kernel
-        # Solução robusta para inicializar o build
-        rm -rf out
+        
+        # Solução definitiva para o erro "source tree not clean"
+        # 1. Criar um build directory completamente isolado
+        rm -rf ../kernel_build
+        cp -a . ../kernel_build
+        
+        # 2. Trabalhar na cópia limpa
+        cd ../kernel_build
+        
+        # 3. Configurar toolchains
+        export CLANG_PATH=$(pwd)/clang/bin
+        export GCC_PATH=$(pwd)/gcc/bin
+        export PATH=$CLANG_PATH:$GCC_PATH:$PATH
+        
+        # 4. Criar diretório de output
         mkdir -p out
+        
+        # 5. Copiar configuração
         cp .config out/.config
         
-        # Executar silentoldconfig para inicializar o ambiente
-        make ARCH=arm64 O=out CC=$(pwd)/clang/bin/clang \
-            CROSS_COMPILE=$(pwd)/gcc/bin/aarch64-linux-gnu- \
-            silentoldconfig </dev/null
+        # 6. Executar configuração inicial
+        make ARCH=arm64 O=out CC=clang \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            oldconfig </dev/null
 
     - name: Build Kernel
       run: |
-        cd kernel
-        make -j$(nproc) ARCH=arm64 O=out CC=$(pwd)/clang/bin/clang \
+        cd kernel_build
+        export CLANG_PATH=$(pwd)/clang/bin
+        export GCC_PATH=$(pwd)/gcc/bin
+        export PATH=$CLANG_PATH:$GCC_PATH:$PATH
+        
+        # Compilar com todas as flags necessárias
+        make -j$(nproc) ARCH=arm64 O=out CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=$(pwd)/gcc/bin/aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
             LD=ld.lld \
             AR=llvm-ar \
             NM=llvm-nm \
@@ -93,17 +97,18 @@ jobs:
             STRIP=llvm-strip \
             LLVM=1 \
             LLVM_IAS=1 \
-            KCFLAGS="-fno-pie"
-            
-    # ... restante do workflow permanece igual ...
+            KCFLAGS="-fno-pie" \
+            KBUILD_BUILD_USER=CI \
+            KBUILD_BUILD_HOST=GitHubActions
+
     - name: Setup AnyKernel3
       run: |
         git clone https://github.com/osm0sis/AnyKernel3
         mkdir -p AnyKernel3/dtbs
         
         # Copiar artefatos de compilação
-        cp kernel/out/arch/arm64/boot/Image.gz AnyKernel3/
-        cp kernel/out/arch/arm64/boot/dts/vendor/*.dtb AnyKernel3/dtbs/ 2>/dev/null || true
+        cp kernel_build/out/arch/arm64/boot/Image.gz AnyKernel3/
+        cp kernel_build/out/arch/arm64/boot/dts/vendor/*.dtb AnyKernel3/dtbs/ 2>/dev/null || true
 
     - name: Create Flashable Zip
       run: |
@@ -112,9 +117,9 @@ jobs:
         mv kernel.zip ../
 
     - name: Upload Artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v3
       with:
         name: kernel-build
         path: |
           kernel.zip
-          kernel/out/arch/arm64/boot/Image.gz
+          kernel_build/out/arch/arm64/boot/Image.gz
