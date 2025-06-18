@@ -66,27 +66,22 @@ jobs:
         wget https://github.com/secretgogeta-kernels/android_kernel_oneplus_sm6375/releases/download/A/config.gz -O kernel/config.gz
         gunzip -c kernel/config.gz > kernel/.config
 
-    - name: Force Initialize Build Directory
-      run: |
-        cd kernel
-        # Criar diretório out vazio
-        rm -rf out
-        mkdir out
-        
-        # Executar um make vazio para inicializar
-        make ARCH=arm64 O=out -f /dev/null
-
     - name: Prepare Build Environment
       run: |
         cd kernel
+        # Solução robusta para inicializar o build
+        rm -rf out
+        mkdir -p out
+        cp .config out/.config
+        
+        # Executar silentoldconfig para inicializar o ambiente
         make ARCH=arm64 O=out CC=$(pwd)/clang/bin/clang \
             CROSS_COMPILE=$(pwd)/gcc/bin/aarch64-linux-gnu- \
-            oldconfig </dev/null
+            silentoldconfig </dev/null
 
     - name: Build Kernel
       run: |
         cd kernel
-        # Forçar rebuild completo com limpeza automática
         make -j$(nproc) ARCH=arm64 O=out CC=$(pwd)/clang/bin/clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=$(pwd)/gcc/bin/aarch64-linux-gnu- \
@@ -98,10 +93,8 @@ jobs:
             STRIP=llvm-strip \
             LLVM=1 \
             LLVM_IAS=1 \
-            KCFLAGS="-fno-pie" \
-            KBUILD_BUILD_VERSION=1 \
-            KBUILD_BUILD_TIMESTAMP=$(date +%s)
-
+            KCFLAGS="-fno-pie"
+            
     # ... restante do workflow permanece igual ...
     - name: Setup AnyKernel3
       run: |
