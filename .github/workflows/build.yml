@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 120
 
     steps:
@@ -28,15 +28,18 @@ jobs:
         git clone --depth 1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9
         git clone --depth 1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9
 
-    - name: Download config
+    - name: Download and prepare config
       run: |
         wget https://github.com/secretgogeta-kernels/android_kernel_oneplus_sm6375/releases/download/A/config.gz
-        zcat config.gz > larry_defconfig
+        zcat config.gz > android_kernel_oneplus_sm6375/arch/arm64/configs/larry_defconfig
         
-        # Fix section mismatch errors by allowing warnings only
-        echo "CONFIG_SECTION_MISMATCH_WARN_ONLY=y" >> larry_defconfig
-        
-        mv larry_defconfig android_kernel_oneplus_sm6375/arch/arm64/configs/
+        # Ensure CONFIG_SECTION_MISMATCH_WARN_ONLY=y is set (add if not present, or update if present)
+        # This avoids the override warning if it's already in the downloaded config
+        if ! grep -q "CONFIG_SECTION_MISMATCH_WARN_ONLY=y" android_kernel_oneplus_sm6375/arch/arm64/configs/larry_defconfig; then
+          echo "CONFIG_SECTION_MISMATCH_WARN_ONLY=y" >> android_kernel_oneplus_sm6375/arch/arm64/configs/larry_defconfig
+        else
+          sed -i 's/.*CONFIG_SECTION_MISMATCH_WARN_ONLY.*/CONFIG_SECTION_MISMATCH_WARN_ONLY=y/' android_kernel_oneplus_sm6375/arch/arm64/configs/larry_defconfig
+        fi
 
     - name: Set up build environment
       run: |
@@ -49,11 +52,12 @@ jobs:
         cd android_kernel_oneplus_sm6375
         make O=out ARCH=arm64 mrproper
         
-        # Configure kernel with automatic defaults
         make O=out ARCH=arm64 larry_defconfig
-        make O=out ARCH=arm64 olddefconfig
         
-        # Build with section mismatch warnings allowed
+        # Attempt to resolve new Kconfig symbols non-interactively by accepting defaults
+        # This is a common way to handle this in CI; for more control, generate a fully complete defconfig.
+        yes '' | make O=out ARCH=arm64 olddefconfig
+        
         make -j$(nproc --all) \
           PATH="$CLANG_DIR:$GCC64_DIR:$GCC_DIR:$PATH" \
           CC=clang \
@@ -63,11 +67,50 @@ jobs:
           O=out \
           ARCH=arm64
 
-    - name: Archive artifacts
+    - name: Archive kernel binaries
       uses: actions/upload-artifact@v4
       with:
-        name: kernel-build
+        name: kernel-build-binaries
         path: |
           android_kernel_oneplus_sm6375/out/arch/arm64/boot/Image.gz
           android_kernel_oneplus_sm6375/out/arch/arm64/boot/dtbo.img
           android_kernel_oneplus_sm6375/out/arch/arm64/boot/dtb.img
+
+    - name: Clone AnyKernel3
+      run: git clone --depth 1 https://github.com/osm0sis/AnyKernel3 anykernel
+
+    - name: Prepare AnyKernel3 package
+      run: |
+        KERNEL_STRING="LarryKernel-$(date +%Y%m%d-%H%MUTC)" # Example kernel string
+        ZIP_NAME="LarryKernel-SM6375-$(date +%Y%m%d).zip"
+
+        # Copy kernel image
+        cp android_kernel_oneplus_sm6375/out/arch/arm64/boot/Image.gz anykernel/Image.gz-dtb # AK3 looks for Image.gz-dtb by default for many QCOM
+
+        # If your device uses a separate DTBO, copy it. Otherwise, AK3 might handle DTB extraction/patching from Image.gz-dtb
+        if [ -f android_kernel_oneplus_sm6375/out/arch/arm64/boot/dtbo.img ]; then
+          cp android_kernel_oneplus_sm6375/out/arch/arm64/boot/dtbo.img anykernel/dtbo.img
+        fi
+        
+        # If your device needs a combined dtb.img (less common with Image.gz-dtb)
+        # cp android_kernel_oneplus_sm6375/out/arch/arm64/boot/dtb.img anykernel/dtb
+
+        # Modify anykernel.sh
+        cd anykernel
+        sed -i 's/kernel.string=.*/kernel.string='"${KERNEL_STRING}"'/' anykernel.sh
+        sed -i 's/do.devicecheck=.*/do.devicecheck=1/' anykernel.sh
+        sed -i 's/device.name1=.*/device.name1=larry/' anykernel.sh # Replace 'larry' with actual codename
+        # Add more device names if needed:
+        # sed -i 's/device.name2=.*/device.name2=another_codename/' anykernel.sh
+        
+        # Create the zip file
+        zip -r9 "../${ZIP_NAME}" * -x ".git*" -x "README.md" -x "*.zip"
+        cd ..
+
+    - name: Archive AnyKernel3 zip
+      uses: actions/upload-artifact@v4
+      with:
+        name: AnyKernel3-Zip
+        path: ${{ env.ZIP_NAME }} # Use the variable for path
+      env:
+        ZIP_NAME: LarryKernel-SM6375-$(date +%Y%m%d).zip # Define it here for this step too, or pass via outputs
