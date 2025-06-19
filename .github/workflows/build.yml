@@ -6,120 +6,68 @@ on:
     branches: [ main ]
 
 jobs:
-  build-kernel:
+  build:
     runs-on: ubuntu-22.04
     timeout-minutes: 120
 
     steps:
-    - name: Checkout Kernel Source
+    - name: Checkout repository
       uses: actions/checkout@v4
-      with:
-        repository: Teamhackneyed/android_kernel_oneplus_sm6375
-        path: kernel
-        clean: true
-        fetch-depth: 1  # Usar fetch-depth:1 para economizar espaço
 
-    - name: Remove Git History
-      run: |
-        # Remover completamente o histórico do Git para evitar detecção de "dirty tree"
-        rm -rf kernel/.git
-
-    - name: Install Dependencies
+    - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y \
-          build-essential libssl-dev libncurses-dev \
-          bison flex bc rsync kmod cpio python3 \
-          clang llvm lld libelf-dev git wget zip
+        sudo apt-get install -y git-core gnupg flex bison build-essential zip curl zlib1g-dev \
+          libc6-dev-i386 x11proto-core-dev libx11-dev lib32z1-dev libgl1-mesa-dev \
+          libxml2-utils xsltproc unzip fontconfig repo libssl-dev android-sdk-platform-tools
 
-    - name: Setup Toolchains
+    - name: Clone repositories
       run: |
-        # Baixar Clang diretamente para um diretório temporário
-        mkdir clang_temp
-        wget -q https://github.com/ZyCromerZ/Clang/releases/download/21.0.0git-20250617-release/Clang-21.0.0git-20250617.tar.gz -O clang_temp/clang.tar.gz
-        tar -xzf clang_temp/clang.tar.gz -C clang_temp
-        mkdir -p kernel/clang
-        mv clang_temp/* kernel/clang/
-        rm -rf clang_temp
+        git clone --depth 1 https://github.com/LineageOS/android_kernel_oneplus_sm6375
+        git clone --depth 1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b
+        git clone --depth 1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9
+        git clone --depth 1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9
 
-        # Instalar GCC
-        git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-gnu-9.3 kernel/gcc
-
-    - name: Download Config
+    - name: Download config
       run: |
-        wget https://github.com/secretgogeta-kernels/android_kernel_oneplus_sm6375/releases/download/A/config.gz -O kernel/config.gz
-        gunzip -c kernel/config.gz > kernel/.config
+        wget https://github.com/secretgogeta-kernels/android_kernel_oneplus_sm6375/releases/download/A/config.gz
+        zcat config.gz > larry_defconfig
+        
+        # Fix section mismatch errors by allowing warnings only
+        echo "CONFIG_SECTION_MISMATCH_WARN_ONLY=y" >> larry_defconfig
+        
+        mv larry_defconfig android_kernel_oneplus_sm6375/arch/arm64/configs/
 
-    - name: Prepare Build Environment
+    - name: Set up build environment
       run: |
-        cd kernel
-        
-        # Solução definitiva para o erro "source tree not clean"
-        # 1. Criar um build directory completamente isolado
-        rm -rf ../kernel_build
-        cp -a . ../kernel_build
-        
-        # 2. Trabalhar na cópia limpa
-        cd ../kernel_build
-        
-        # 3. Configurar toolchains
-        export CLANG_PATH=$(pwd)/clang/bin
-        export GCC_PATH=$(pwd)/gcc/bin
-        export PATH=$CLANG_PATH:$GCC_PATH:$PATH
-        
-        # 4. Criar diretório de output
-        mkdir -p out
-        
-        # 5. Copiar configuração
-        cp .config out/.config
-        
-        # 6. Executar configuração inicial
-        make ARCH=arm64 O=out CC=clang \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            oldconfig </dev/null
+        echo "CLANG_DIR=$PWD/android_prebuilts_clang_kernel_linux-x86_clang-r416183b/bin" >> $GITHUB_ENV
+        echo "GCC64_DIR=$PWD/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9/bin" >> $GITHUB_ENV
+        echo "GCC_DIR=$PWD/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9/bin" >> $GITHUB_ENV
 
-    - name: Build Kernel
+    - name: Build kernel
       run: |
-        cd kernel_build
-        export CLANG_PATH=$(pwd)/clang/bin
-        export GCC_PATH=$(pwd)/gcc/bin
-        export PATH=$CLANG_PATH:$GCC_PATH:$PATH
+        cd android_kernel_oneplus_sm6375
+        make O=out ARCH=arm64 mrproper
         
-        # Compilar com todas as flags necessárias
-        make -j$(nproc) ARCH=arm64 O=out CC=clang \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            LD=ld.lld \
-            AR=llvm-ar \
-            NM=llvm-nm \
-            OBJCOPY=llvm-objcopy \
-            OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            KCFLAGS="-fno-pie" \
-            KBUILD_BUILD_USER=CI \
-            KBUILD_BUILD_HOST=GitHubActions
-
-    - name: Setup AnyKernel3
-      run: |
-        git clone https://github.com/osm0sis/AnyKernel3
-        mkdir -p AnyKernel3/dtbs
+        # Configure kernel with automatic defaults
+        make O=out ARCH=arm64 larry_defconfig
+        make O=out ARCH=arm64 olddefconfig
         
-        # Copiar artefatos de compilação
-        cp kernel_build/out/arch/arm64/boot/Image.gz AnyKernel3/
-        cp kernel_build/out/arch/arm64/boot/dts/vendor/*.dtb AnyKernel3/dtbs/ 2>/dev/null || true
+        # Build with section mismatch warnings allowed
+        make -j$(nproc --all) \
+          PATH="$CLANG_DIR:$GCC64_DIR:$GCC_DIR:$PATH" \
+          CC=clang \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
+          CROSS_COMPILE=aarch64-linux-android- \
+          CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+          O=out \
+          ARCH=arm64
 
-    - name: Create Flashable Zip
-      run: |
-        cd AnyKernel3
-        zip -r9 kernel.zip *
-        mv kernel.zip ../
-
-    - name: Upload Artifact
+    - name: Archive artifacts
       uses: actions/upload-artifact@v4
       with:
         name: kernel-build
         path: |
-          kernel.zip
-          kernel_build/out/arch/arm64/boot/Image.gz
+          android_kernel_oneplus_sm6375/out/arch/arm64/boot/Image.gz
+          android_kernel_oneplus_sm6375/out/arch/arm64/boot/dtbo.img
+          android_kernel_oneplus_sm6375/out/arch/arm64/boot/dtb.img
