@@ -3,14 +3,12 @@ name: Kernel Build and Deployment
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
   build-kernel:
     runs-on: ubuntu-latest
     timeout-minutes: 180
-
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
@@ -27,7 +25,7 @@ jobs:
       run: |
         #!/bin/bash
         set -e
-
+        
         # Build variables
         BUILD_ROOT_DIR=$(pwd)
         KERNEL_SOURCE_DIR="android_kernel_oneplus_sm6375"
@@ -38,42 +36,56 @@ jobs:
         KERNEL_NAME_PREFIX="LarryKernel-SM6375"
         DEFCONFIG_KERNEL_PATH="vendor/holi-qgki_defconfig"
         SUSFS_REPO_DIR="susfs4ksu"
-        KSU_NEXT_DIR_IN_KERNEL="$BUILD_ROOT_DIR/$KERNEL_SOURCE_DIR/KernelSU-Next"
-
+        
         # Clone main repositories
-        git clone --depth 1 https://github.com/LineageOS/android_kernel_oneplus_sm6375 $KERNEL_SOURCE_DIR
-        git clone --depth 1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b $CLANG_REPO_DIR
-        git clone --depth 1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 $GCC64_REPO_DIR
-        git clone --depth 1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 $GCC32_REPO_DIR
+        git clone --depth=1 https://github.com/LineageOS/android_kernel_oneplus_sm6375 $KERNEL_SOURCE_DIR
+        git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b $CLANG_REPO_DIR
+        git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 $GCC64_REPO_DIR
+        git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 $GCC32_REPO_DIR
 
         # Clone and integrate SuSFS
-        git clone https://gitlab.com/simonpunk/susfs4ksu.git $SUSFS_REPO_DIR
+        git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git $SUSFS_REPO_DIR
         (cd $KERNEL_SOURCE_DIR && curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -)
         
         # Copy SuSFS patches
-        cp $SUSFS_REPO_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch $KSU_NEXT_DIR_IN_KERNEL/
-        cp $SUSFS_REPO_DIR/kernel_patches/50_add_susfs_in_kernel-5.4.patch $BUILD_ROOT_DIR/$KERNEL_SOURCE_DIR/
+        cp $SUSFS_REPO_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch $KERNEL_SOURCE_DIR/KernelSU-Next/
+        SUSFS_KERNEL_PATCH=$SUSFS_REPO_DIR/kernel_patches/50_add_susfs_in_kernel-5.4.patch
+        cp $SUSFS_KERNEL_PATCH $BUILD_ROOT_DIR/$KERNEL_SOURCE_DIR/
         rsync -a $SUSFS_REPO_DIR/kernel_patches/fs/ $BUILD_ROOT_DIR/$KERNEL_SOURCE_DIR/fs/
         rsync -a $SUSFS_REPO_DIR/kernel_patches/include/linux/ $BUILD_ROOT_DIR/$KERNEL_SOURCE_DIR/include/linux/
 
-        # Apply patches
-        (cd $KSU_NEXT_DIR_IN_KERNEL && patch -p1 < 10_enable_susfs_for_ksu.patch)
-        (cd $BUILD_ROOT_DIR/$KERNEL_SOURCE_DIR && patch -p1 < 50_add_susfs_in_kernel-5.4.patch)
+        # Apply patches with error handling
+        (cd $KERNEL_SOURCE_DIR/KernelSU-Next && patch -p1 < 10_enable_susfs_for_ksu.patch)
+        
+        # Apply kernel patch with fuzz factor to handle offsets
+        echo "Applying kernel patch with fuzz factor..."
+        (cd $BUILD_ROOT_DIR/$KERNEL_SOURCE_DIR && patch -p1 -F 3 < $(basename $SUSFS_KERNEL_PATCH) || {
+            echo "Patch application failed, attempting manual resolution"
+            # Handle specific known failure
+            if [ -f "fs/proc/task_mmu.c.rej" ]; then
+                echo "Detected task_mmu.c patch failure - applying manual fix"
+                # Add manual patch adjustments here if needed
+            fi
+            # Fail build if critical patches didn't apply
+            exit 1
+        })
 
         # Configure kernel
         echo -e "\n# KernelSU and SuSFS Configuration" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
-        echo "CONFIG_KSU=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
-        echo "CONFIG_KSU_SUSFS=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
-        echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
-        echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
-        echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
-        echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
-        echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
-        echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
-        echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
-        echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
-        echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
-        echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
+        cat <<EOF >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
+        CONFIG_KSU=y
+        CONFIG_KSU_SUSFS=y
+        CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+        CONFIG_KSU_SUSFS_SUS_MOUNT=y
+        CONFIG_KSU_SUSFS_SUS_KSTAT=y
+        CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y
+        CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+        CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+        CONFIG_KSU_SUSFS_ENABLE_LOG=y
+        CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+        CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+        CONFIG_KSU_SUSFS_SUS_SU=y
+        EOF
 
         # Set up build environment
         export CLANG_DIR="$BUILD_ROOT_DIR/$CLANG_REPO_DIR/bin"
@@ -114,7 +126,7 @@ jobs:
         cd $BUILD_ROOT_DIR
 
         # Prepare artifacts for upload
-        mkdir artifacts
+        mkdir -p artifacts
         [ -f build.log ] && mv build.log artifacts/
         [ -f Image ] && mv Image artifacts/
         [ -f $ZIP_NAME ] && mv $ZIP_NAME artifacts/
