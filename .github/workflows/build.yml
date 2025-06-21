@@ -1,116 +1,128 @@
-name: Kernel Builder
+name: Kernel Build and Deployment
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches:
+      - main
 
 jobs:
-  build:
+  build-kernel:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     steps:
-    - name: Checkout repository
+    - name: Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Install dependencies
+    - name: Setup Build Environment
       run: |
         sudo apt-get update
         sudo apt-get install -y git-core gnupg flex bison build-essential zip curl zlib1g-dev \
           libc6-dev-i386 x11proto-core-dev libx11-dev lib32z1-dev libgl1-mesa-dev \
-          libxml2-utils xsltproc unzip fontconfig repo libssl-dev android-sdk-platform-tools
+          libxml2-utils xsltproc unzip fontconfig repo libssl-dev android-sdk-platform-tools \
+          bc rsync kmod cpio ccache
 
-    - name: Clone repositories
+    - name: Build Kernel
       run: |
-        git clone --depth 1 https://github.com/LineageOS/android_kernel_oneplus_sm6375
-        git clone --depth 1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b
-        git clone --depth 1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9
-        git clone --depth 1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9
+        #!/bin/bash
+        set -e
 
-    - name: Download and prepare config
-      run: |
-        wget https://github.com/secretgogeta-kernels/android_kernel_oneplus_sm6375/releases/download/A/config.gz
-        zcat config.gz > android_kernel_oneplus_sm6375/arch/arm64/configs/larry_defconfig
+        # Build variables
+        BUILD_ROOT_DIR=$(pwd)
+        KERNEL_SOURCE_DIR="android_kernel_oneplus_sm6375"
+        CLANG_REPO_DIR="android_prebuilts_clang_kernel_linux-x86_clang-r416183b"
+        GCC64_REPO_DIR="android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9"
+        GCC32_REPO_DIR="android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9"
+        ANYKERNEL_DEVICE_CODENAME1="larry"
+        KERNEL_NAME_PREFIX="LarryKernel-SM6375"
+        DEFCONFIG_KERNEL_PATH="vendor/holi-qgki_defconfig"
+        SUSFS_REPO_DIR="susfs4ksu"
+        KSU_NEXT_DIR_IN_KERNEL="$BUILD_ROOT_DIR/$KERNEL_SOURCE_DIR/KernelSU-Next"
+
+        # Clone main repositories
+        git clone --depth 1 https://github.com/LineageOS/android_kernel_oneplus_sm6375 $KERNEL_SOURCE_DIR
+        git clone --depth 1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b $CLANG_REPO_DIR
+        git clone --depth 1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 $GCC64_REPO_DIR
+        git clone --depth 1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 $GCC32_REPO_DIR
+
+        # Clone and integrate SuSFS
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git $SUSFS_REPO_DIR
+        (cd $KERNEL_SOURCE_DIR && curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -)
         
-        # Ensure CONFIG_SECTION_MISMATCH_WARN_ONLY=y is set (add if not present, or update if present)
-        # This avoids the override warning if it's already in the downloaded config
-        if ! grep -q "CONFIG_SECTION_MISMATCH_WARN_ONLY=y" android_kernel_oneplus_sm6375/arch/arm64/configs/larry_defconfig; then
-          echo "CONFIG_SECTION_MISMATCH_WARN_ONLY=y" >> android_kernel_oneplus_sm6375/arch/arm64/configs/larry_defconfig
-        else
-          sed -i 's/.*CONFIG_SECTION_MISMATCH_WARN_ONLY.*/CONFIG_SECTION_MISMATCH_WARN_ONLY=y/' android_kernel_oneplus_sm6375/arch/arm64/configs/larry_defconfig
-        fi
+        # Copy SuSFS patches
+        cp $SUSFS_REPO_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch $KSU_NEXT_DIR_IN_KERNEL/
+        cp $SUSFS_REPO_DIR/kernel_patches/50_add_susfs_in_kernel-5.4.patch $BUILD_ROOT_DIR/$KERNEL_SOURCE_DIR/
+        rsync -a $SUSFS_REPO_DIR/kernel_patches/fs/ $BUILD_ROOT_DIR/$KERNEL_SOURCE_DIR/fs/
+        rsync -a $SUSFS_REPO_DIR/kernel_patches/include/linux/ $BUILD_ROOT_DIR/$KERNEL_SOURCE_DIR/include/linux/
 
-    - name: Set up build environment
-      run: |
-        echo "CLANG_DIR=$PWD/android_prebuilts_clang_kernel_linux-x86_clang-r416183b/bin" >> $GITHUB_ENV
-        echo "GCC64_DIR=$PWD/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9/bin" >> $GITHUB_ENV
-        echo "GCC_DIR=$PWD/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9/bin" >> $GITHUB_ENV
+        # Apply patches
+        (cd $KSU_NEXT_DIR_IN_KERNEL && patch -p1 < 10_enable_susfs_for_ksu.patch)
+        (cd $BUILD_ROOT_DIR/$KERNEL_SOURCE_DIR && patch -p1 < 50_add_susfs_in_kernel-5.4.patch)
 
-    - name: Build kernel
-      run: |
-        cd android_kernel_oneplus_sm6375
+        # Configure kernel
+        echo -e "\n# KernelSU and SuSFS Configuration" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
+        echo "CONFIG_KSU=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
+        echo "CONFIG_KSU_SUSFS=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
+        echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
+        echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
+        echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
+        echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
+        echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
+        echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
+        echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
+        echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
+        echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
+        echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> $KERNEL_SOURCE_DIR/arch/arm64/configs/$DEFCONFIG_KERNEL_PATH
+
+        # Set up build environment
+        export CLANG_DIR="$BUILD_ROOT_DIR/$CLANG_REPO_DIR/bin"
+        export GCC64_DIR="$BUILD_ROOT_DIR/$GCC64_REPO_DIR/bin"
+        export GCC_DIR="$BUILD_ROOT_DIR/$GCC32_REPO_DIR/bin"
+        export PATH="$CLANG_DIR:$GCC64_DIR:$GCC_DIR:$PATH"
+        export KBUILD_BUILD_HOST="GitHub-Actions"
+        export KBUILD_BUILD_USER="github"
+        
+        # Build kernel
+        cd $KERNEL_SOURCE_DIR
         make O=out ARCH=arm64 mrproper
-        
-        make O=out ARCH=arm64 larry_defconfig
-        
-        # Attempt to resolve new Kconfig symbols non-interactively by accepting defaults
-        # This is a common way to handle this in CI; for more control, generate a fully complete defconfig.
+        make O=out ARCH=arm64 $DEFCONFIG_KERNEL_PATH
         yes '' | make O=out ARCH=arm64 olddefconfig
         
+        BUILD_LOG_FILE="$BUILD_ROOT_DIR/build.log"
         make -j$(nproc --all) \
-          PATH="$CLANG_DIR:$GCC64_DIR:$GCC_DIR:$PATH" \
           CC=clang \
           CLANG_TRIPLE=aarch64-linux-gnu- \
           CROSS_COMPILE=aarch64-linux-android- \
           CROSS_COMPILE_ARM32=arm-linux-androideabi- \
           O=out \
-          ARCH=arm64
+          ARCH=arm64 2>&1 | tee $BUILD_LOG_FILE
+        
+        # Prepare artifacts
+        KERNEL_IMAGE_PATH="$BUILD_ROOT_DIR/$KERNEL_SOURCE_DIR/out/arch/arm64/boot/Image"
+        [ -f "$KERNEL_IMAGE_PATH" ] && cp $KERNEL_IMAGE_PATH $BUILD_ROOT_DIR/Image
+        
+        git clone --depth 1 https://github.com/osm0sis/AnyKernel3
+        cp $KERNEL_IMAGE_PATH AnyKernel3/Image
+        cd AnyKernel3
+        sed -i "s/kernel.string=.*/kernel.string=${KERNEL_NAME_PREFIX}-$(date +%Y%m%d)-KSU/;
+                s/do.devicecheck=.*/do.devicecheck=1/;
+                s/device.name1=.*/device.name1=${ANYKERNEL_DEVICE_CODENAME1}/" anykernel.sh
+        ZIP_NAME="${KERNEL_NAME_PREFIX}-KSU-$(date +%Y%m%d).zip"
+        zip -r9 $ZIP_NAME *
+        mv $ZIP_NAME $BUILD_ROOT_DIR/
+        cd $BUILD_ROOT_DIR
 
-    - name: Archive kernel binaries
+        # Prepare artifacts for upload
+        mkdir artifacts
+        [ -f build.log ] && mv build.log artifacts/
+        [ -f Image ] && mv Image artifacts/
+        [ -f $ZIP_NAME ] && mv $ZIP_NAME artifacts/
+
+      shell: bash
+
+    - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: kernel-build-binaries
-        path: |
-          android_kernel_oneplus_sm6375/out/arch/arm64/boot/Image.gz
-          android_kernel_oneplus_sm6375/out/arch/arm64/boot/dtbo.img
-          android_kernel_oneplus_sm6375/out/arch/arm64/boot/dtb.img
-
-    - name: Clone AnyKernel3
-      run: git clone --depth 1 https://github.com/osm0sis/AnyKernel3 anykernel
-
-    - name: Prepare AnyKernel3 package
-      run: |
-        KERNEL_STRING="LarryKernel-$(date +%Y%m%d-%H%MUTC)" # Example kernel string
-        ZIP_NAME="LarryKernel-SM6375-$(date +%Y%m%d).zip"
-
-        # Copy kernel image
-        cp android_kernel_oneplus_sm6375/out/arch/arm64/boot/Image.gz anykernel/Image.gz-dtb # AK3 looks for Image.gz-dtb by default for many QCOM
-
-        # If your device uses a separate DTBO, copy it. Otherwise, AK3 might handle DTB extraction/patching from Image.gz-dtb
-        if [ -f android_kernel_oneplus_sm6375/out/arch/arm64/boot/dtbo.img ]; then
-          cp android_kernel_oneplus_sm6375/out/arch/arm64/boot/dtbo.img anykernel/dtbo.img
-        fi
-        
-        # If your device needs a combined dtb.img (less common with Image.gz-dtb)
-        # cp android_kernel_oneplus_sm6375/out/arch/arm64/boot/dtb.img anykernel/dtb
-
-        # Modify anykernel.sh
-        cd anykernel
-        sed -i 's/kernel.string=.*/kernel.string='"${KERNEL_STRING}"'/' anykernel.sh
-        sed -i 's/do.devicecheck=.*/do.devicecheck=1/' anykernel.sh
-        sed -i 's/device.name1=.*/device.name1=larry/' anykernel.sh # Replace 'larry' with actual codename
-        # Add more device names if needed:
-        # sed -i 's/device.name2=.*/device.name2=another_codename/' anykernel.sh
-        
-        # Create the zip file
-        zip -r9 "../${ZIP_NAME}" * -x ".git*" -x "README.md" -x "*.zip"
-        cd ..
-
-    - name: Archive AnyKernel3 zip
-      uses: actions/upload-artifact@v4
-      with:
-        name: AnyKernel3-Zip
-        path: ${{ env.ZIP_NAME }} # Use the variable for path
-      env:
-        ZIP_NAME: LarryKernel-SM6375-$(date +%Y%m%d).zip # Define it here for this step too, or pass via outputs
+        name: kernel-artifacts
+        path: artifacts/
